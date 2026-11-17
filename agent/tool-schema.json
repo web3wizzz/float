@@ -1,0 +1,52 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Float",
+    "version": "0.1.0",
+    "description": "Bounded tUSD8 payments for AI agents. These operations map to the float CLI. The vault policy is the authority; this schema is not."
+  },
+  "paths": {
+    "/balance": { "get": { "operationId": "balance", "summary": "float balance" } },
+    "/policy": { "get": { "operationId": "policy", "summary": "float policy" } },
+    "/pay": {
+      "post": {
+        "operationId": "pay",
+        "summary": "float pay",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["payee", "amount"],
+                "properties": {
+                  "payee": { "type": "string" },
+                  "amount": { "type": "integer", "minimum": 1 },
+                  "memo": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/invoice/pay": {
+      "post": {
+        "operationId": "invoicePay",
+        "summary": "float invoice pay",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["id"],
+                "properties": { "id": { "type": "string" } }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

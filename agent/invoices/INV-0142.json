@@ -1,0 +1,8 @@
+{
+  "id": "INV-0142",
+  "payee": "Acme Studio",
+  "amount": 120,
+  "currency": "tUSD8",
+  "memo": "brand system",
+  "metadataHash": "keccak256 of this document once you pin it"
+}
