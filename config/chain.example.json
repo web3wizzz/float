@@ -1,0 +1,14 @@
+{
+  "name": "Aevum testnet",
+  "chainId": 44005,
+  "rpcUrl": "https://rpc-test.qday.info",
+  "explorerUrl": "https://explorer-test.qday.info",
+  "faucetUrl": "https://faucet.qday.info",
+  "native": { "symbol": "tQDAY", "decimals": 18 },
+  "tokenSymbol": "tUSD8",
+  "tokenDecimals": "UNVERIFIED — read the address and the decimals only from packages/sdk/src/config.ts",
+  "vaultAddress": "",
+  "escrowAddress": "",
+  "routerAddress": "",
+  "authAddress": ""
+}
