@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Bricolage Grotesque", "Instrument Sans", ui-sans-serif, sans-serif;
+  --font-sans: "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --color-paper: #edf1ee;
+  --color-ink: #0e2a47;
+  --color-seal: #2450e6;
+  --color-treasury: #17785a;
+  --color-stamp: #d9962b;
+  --color-surface: color-mix(in srgb, var(--color-paper) 62%, white);
+  --color-surface-2: color-mix(in srgb, var(--color-ink) 8%, var(--color-paper));
+  --color-line: color-mix(in srgb, var(--color-ink) 16%, var(--color-paper));
+  --color-muted: color-mix(in srgb, var(--color-ink) 62%, var(--color-paper));
+  --radius-lg: 0.75rem;
+}
+
+@layer base {
+  html {
+    background: var(--color-paper);
+    color: var(--color-ink);
+  }
+  body {
+    font-family: var(--font-sans);
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+  ::selection {
+    background: var(--color-seal);
+    color: var(--color-paper);
+  }
+}
+
+@keyframes feed-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.feed-item {
+  animation: feed-in 180ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .feed-item {
+    animation: none;
+  }
+}
