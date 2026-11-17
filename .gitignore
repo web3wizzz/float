@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.output/
+data/keystore.json
+data/sandbox-ledger.json
+data/x402-served.json
+contracts/cache/
+contracts/out/
+contracts/broadcast/
+contracts/lib/
+.env
+.env.*
+!.env.example
