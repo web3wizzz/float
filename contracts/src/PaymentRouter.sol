@@ -12,11 +12,9 @@ contract PaymentRouter {
 
     error BadBatch();
 
-    function executeBatch(
-        AgentVault vault,
-        AgentVault.PaymentIntent[] calldata intents,
-        bytes[] calldata signatures
-    ) external {
+    function executeBatch(AgentVault vault, AgentVault.PaymentIntent[] calldata intents, bytes[] calldata signatures)
+        external
+    {
         uint256 n = intents.length;
         if (n == 0 || n > MAX_BATCH || signatures.length != n) revert BadBatch();
         for (uint256 i; i < n;) {

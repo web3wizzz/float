@@ -10,7 +10,9 @@ import {InvoiceTypes} from "./libraries/InvoiceTypes.sol";
 /// @title InvoiceEscrow
 /// @notice Payee opens an invoice. Payer (a wallet or an AgentVault) funds it.
 ///         Delivery + payer confirm releases funds. Past due without delivery refunds.
-///         After delivery, anyone can release once the confirm window elapses.
+///         Delivery cannot be marked at or after the due date, so a late mark cannot
+///         block that refund or mature into an auto-release.
+///         After a delivery that landed in time, anyone can release once the confirm window elapses.
 ///         Either party can flag a dispute; only the arbiter can resolve it.
 contract InvoiceEscrow is ReentrancyGuard, Ownable {
     using SafeERC20 for IERC20;
@@ -24,7 +26,12 @@ contract InvoiceEscrow is ReentrancyGuard, Ownable {
     mapping(uint256 id => InvoiceTypes.Invoice) public invoices;
 
     event InvoiceCreated(
-        uint256 indexed id, address indexed payee, address indexed payer, uint256 amount, uint64 dueDate, bytes32 metadataHash
+        uint256 indexed id,
+        address indexed payee,
+        address indexed payer,
+        uint256 amount,
+        uint64 dueDate,
+        bytes32 metadataHash
     );
     event InvoiceFunded(uint256 indexed id, address indexed from);
     event InvoiceDelivered(uint256 indexed id);
@@ -42,6 +49,7 @@ contract InvoiceEscrow is ReentrancyGuard, Ownable {
     error NotParty();
     error NotArbiter();
     error TooEarly();
+    error DueDatePassed(uint256 id);
     error UnknownInvoice();
 
     constructor(IERC20 paymentToken, address initialOwner, address initialArbiter) Ownable(initialOwner) {
@@ -82,6 +90,7 @@ contract InvoiceEscrow is ReentrancyGuard, Ownable {
         if (inv.status == InvoiceTypes.Status.None) revert UnknownInvoice();
         if (inv.status != InvoiceTypes.Status.Open) revert BadStatus();
         if (msg.sender != inv.payer) revert NotPayer();
+        if (block.timestamp >= inv.dueDate) revert DueDatePassed(id);
         inv.status = InvoiceTypes.Status.Funded;
         inv.fundedAt = uint64(block.timestamp);
         token.safeTransferFrom(msg.sender, address(this), inv.amount);
@@ -92,6 +101,7 @@ contract InvoiceEscrow is ReentrancyGuard, Ownable {
         InvoiceTypes.Invoice storage inv = invoices[id];
         if (inv.payee != msg.sender) revert NotPayee();
         if (inv.status != InvoiceTypes.Status.Funded) revert BadStatus();
+        if (block.timestamp >= inv.dueDate) revert DueDatePassed(id);
         inv.status = InvoiceTypes.Status.Delivered;
         inv.deliveredAt = uint64(block.timestamp);
         emit InvoiceDelivered(id);
@@ -123,7 +133,9 @@ contract InvoiceEscrow is ReentrancyGuard, Ownable {
     function dispute(uint256 id) external {
         InvoiceTypes.Invoice storage inv = invoices[id];
         if (msg.sender != inv.payer && msg.sender != inv.payee) revert NotParty();
-        if (inv.status != InvoiceTypes.Status.Funded && inv.status != InvoiceTypes.Status.Delivered) revert BadStatus();
+        if (inv.status != InvoiceTypes.Status.Funded && inv.status != InvoiceTypes.Status.Delivered) {
+            revert BadStatus();
+        }
         inv.status = InvoiceTypes.Status.Disputed;
         emit InvoiceDisputed(id, msg.sender);
     }

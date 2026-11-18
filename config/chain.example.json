@@ -6,7 +6,7 @@
   "faucetUrl": "https://faucet.qday.info",
   "native": { "symbol": "tQDAY", "decimals": 18 },
   "tokenSymbol": "tUSD8",
-  "tokenDecimals": "UNVERIFIED — read the address and the decimals only from packages/sdk/src/config.ts",
+  "tokenDecimals": "6, verified on Aevum. Read the value only from packages/sdk/src/config.ts",
   "vaultAddress": "",
   "escrowAddress": "",
   "routerAddress": "",
