@@ -1,0 +1,10 @@
+Synonym
+  Copyright Indian Type Foundry
+  Licensed for use via Fontshare (https://www.fontshare.com/fonts/synonym).
+  Free for personal and commercial use. Self-hosted woff2 files are the
+  latin files served by the Fontshare CSS API.
+
+JetBrains Mono
+  Copyright 2020 The JetBrains Mono Project Authors
+  Licensed under the SIL Open Font License, Version 1.1.
+  https://github.com/JetBrains/JetBrainsMono

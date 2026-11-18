@@ -1,0 +1,6 @@
+{
+  "title": "Float — agent vault",
+  "description": "Give your agents a float, not your keys. A tUSD8 vault on Aevum with a per-transaction cap, a daily limit, an allowlist, and a pause.",
+  "color": "#0E1714",
+  "card": "custom"
+}

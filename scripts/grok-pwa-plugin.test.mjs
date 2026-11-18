@@ -21,6 +21,10 @@ import { renderInstallPage } from "./grok-pwa-plugin.mjs";
 
 const TEMPLATE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
+// Injector tests that omit `cwd` read the process directory. This app ships
+// public/og.jpg and src/lib/og/site.json, which would leak into those cases.
+process.chdir(mkdtempSync(join(tmpdir(), "grok-pwa-default-cwd-")));
+
 test("injects before </head>", () => {
   const out = injectGrokPwaHead("<html><head><title>x</title></head><body></body></html>");
   assert.match(out, /rel="manifest"/);
