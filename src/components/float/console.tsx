@@ -594,6 +594,9 @@ export function Console() {
                   <ConfigRow k="token" v={tusd8} />
                   <ConfigRow k="decimals" v={String(tusd8Decimals)} />
                   <ConfigRow k="vault" v={contracts.vault || "not deployed"} />
+                  <ConfigRow k="escrow" v={contracts.escrow || "not deployed"} />
+                  <ConfigRow k="router" v={contracts.router || "not deployed"} />
+                  <ConfigRow k="auth" v={contracts.auth || "not deployed"} />
                   <ConfigRow k="wallet" v={isConnected ? `${shortAddr(wallet ?? "")} · ${walletChain ?? "—"}` : "not connected"} />
                 </dl>
                 <div className="mt-3 flex flex-wrap gap-2">

@@ -19,12 +19,15 @@ export const tusd8Decimals = 6;
 
 export const tusd8 = "0x456569838f1d43009A91ebA4263147Afd7233483" as const;
 
-/** Vault deployment addresses. Empty until forge script records them here. */
+/**
+ * Live Aevum deployment from commit 62977c1, block 3478293.
+ * EIP-55 checksums. `AgentVault.token()` is `tusd8`. `AgentVault.escrow()` is `escrow`.
+ */
 export const contracts = {
-  vault: "",
-  escrow: "",
-  router: "",
-  auth: "",
+  vault: "0xCa1F3bFdFc4004EEf19111b8D4d2E420744198ce",
+  escrow: "0xE6d8E06991921A56BD62Ae95340f123F53c5Eef7",
+  router: "0xec74B3999870D8f1790B7e5Cbf50Ae98e084F865",
+  auth: "0x33A0Dd609361De16b46a438062E41aC11fF10EF5",
 } as const;
 
 export const aevumTestnet = defineChain({

@@ -12,7 +12,7 @@ float <command> --json
 
 Set `FLOAT_PASSWORD` for the local encrypted keystore. Never ask a human to paste a private key into a chat, and never write the key into logs.
 
-Chain settings, including the tUSD8 address and its 6 decimals, are read from `packages/sdk/src/config.ts`. Do not hardcode them. CLI amounts are whole tUSD8. Live base units are that amount times `10 ** tusd8Decimals`. Chain id is 44005 (Aevum). Do not use 44003.
+Chain settings, including the tUSD8 address, its 6 decimals, and the deployed vault, escrow, router, and auth addresses, are read from `packages/sdk/src/config.ts`. Do not hardcode them. CLI amounts are whole tUSD8. Live base units are that amount times `10 ** tusd8Decimals`. Chain id is 44005 (Aevum). Do not use 44003.
 
 ## Commands
 
