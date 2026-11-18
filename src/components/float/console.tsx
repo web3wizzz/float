@@ -92,10 +92,11 @@ function loadLedger(raw: string | null): Ledger {
   }
 }
 
-function agentState(agent: Agent, globalPaused: boolean): string {
-  if (!agent.active) return "Revoked";
+function agentState(agent: Agent, globalPaused: boolean, clock: number | null): string {
   if (globalPaused) return "Vault paused";
+  if (!agent.active) return "Revoked";
   if (agent.paused) return "Paused";
+  if (agent.expiry !== 0 && clock != null && clock > agent.expiry) return "Expired";
   return "Can spend";
 }
 
@@ -988,7 +989,7 @@ function Mandate({
   const ratio = agent.dailyLimit === 0 ? 0 : Math.min(1, spent / agent.dailyLimit);
   const capAt = agent.dailyLimit === 0 ? 0 : Math.min(1, agent.perTxLimit / agent.dailyLimit);
   const expired = agent.expiry !== 0 && clock != null && clock > agent.expiry;
-  const state = agentState(agent, paused);
+  const state = agentState(agent, paused, clock);
   const calm = state === "Can spend";
   return (
     <div>
