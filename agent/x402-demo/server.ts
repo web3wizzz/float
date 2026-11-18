@@ -1,8 +1,9 @@
 /**
  * Simplified x402-style resource server.
  * Differs from the official spec: the proof is a raw id in `X-Payment-Proof`,
- * there is no facilitator `/verify` + `/settle` split, and amounts here are
- * whole tUSD8. Chain id and the token address are imported from the SDK config,
+ * there is no facilitator `/verify` + `/settle` split, and the sandbox ledger
+ * settles whole tUSD8. `extra.baseUnits` is that price scaled by `tusd8Decimals`.
+ * Chain id, token address, and decimals are imported from the SDK config,
  * not copied into this file.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -16,6 +17,7 @@ const ROOT = new URL("../../data/", import.meta.url);
 const LEDGER = new URL("sandbox-ledger.json", ROOT);
 const USED = new URL("x402-served.json", ROOT);
 const PRICE = 25;
+const PRICE_BASE = (BigInt(PRICE) * 10n ** BigInt(tusd8Decimals)).toString();
 const PAY_TO = DIRECTORY[1].address;
 
 function readUsed(): string[] {
@@ -61,7 +63,12 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
           resource: "/v1/oracle",
           payTo: PAY_TO,
           asset: tusd8,
-          extra: { token: "tUSD8", decimals: tusd8Decimals, decimalsStatus: "UNVERIFIED", note: "sandbox amounts are whole tUSD8, not base units" },
+          extra: {
+            token: "tUSD8",
+            decimals: tusd8Decimals,
+            baseUnits: PRICE_BASE,
+            note: "Sandbox settlement uses whole tUSD8. baseUnits is that price times 10^decimals.",
+          },
         },
       ],
     });

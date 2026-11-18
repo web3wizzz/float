@@ -16,7 +16,10 @@ import {
   pay,
   registerAgent,
   replayProof,
+  refundInvoice,
   revokeAgent,
+  setGlobalPaused,
+  setPaused,
   spentInWindow,
   withdraw,
 } from "./ledger.ts";
@@ -139,6 +142,51 @@ test("revoked agent cannot pay", () => {
   const after = pay(ledger, { payee: acme, amount: 10, memo: "no" }, T0);
   assert.equal(after.ok, false);
   assert.match(after.message, /revoked/);
+});
+
+test("agent schedules share one daily reserve", () => {
+  let ledger = funded();
+  const first = createSchedule(ledger, { payee: acme, amount: 100, intervalMs: HOUR_MS, maxRuns: 2, memo: "a", byAgent: true }, T0);
+  assert.equal(first.ok, true);
+  ledger = first.ledger;
+  const second = createSchedule(ledger, { payee: acme, amount: 100, intervalMs: HOUR_MS, maxRuns: 2, memo: "b", byAgent: true }, T0);
+  assert.equal(second.ok, true);
+  const third = createSchedule(second.ledger, { payee: acme, amount: 50, intervalMs: HOUR_MS, maxRuns: 1, memo: "c", byAgent: true }, T0);
+  assert.equal(third.ok, false);
+  assert.match(third.message, /daily limit/i);
+  const owner = createSchedule(second.ledger, { payee: acme, amount: 100, intervalMs: HOUR_MS, maxRuns: 4, memo: "o" }, T0);
+  assert.equal(owner.ok, true);
+  const ran = executeSchedule(second.ledger, 1, T0);
+  assert.equal(ran.ok, true);
+  const freed = createSchedule(ran.ledger, { payee: acme, amount: 100, intervalMs: HOUR_MS, maxRuns: 1, memo: "d", byAgent: true }, T0);
+  assert.equal(freed.ok, true);
+});
+
+test("paused or globally paused agent cannot open a schedule", () => {
+  let ledger = funded();
+  ledger = setPaused(ledger, true, T0).ledger;
+  const paused = createSchedule(ledger, { payee: acme, amount: 10, intervalMs: HOUR_MS, maxRuns: 1, memo: "a", byAgent: true }, T0);
+  assert.equal(paused.ok, false);
+  const owner = createSchedule(ledger, { payee: acme, amount: 10, intervalMs: HOUR_MS, maxRuns: 1, memo: "a" }, T0);
+  assert.equal(owner.ok, true);
+  ledger = setPaused(funded(), false, T0).ledger;
+  ledger = setGlobalPaused(ledger, true, T0).ledger;
+  const global = createSchedule(ledger, { payee: acme, amount: 10, intervalMs: HOUR_MS, maxRuns: 1, memo: "a", byAgent: true }, T0);
+  assert.equal(global.ok, false);
+});
+
+test("delivery after the due date cannot block a refund", () => {
+  let ledger = funded();
+  ledger = fundInvoice(ledger, "INV-0142", T0).ledger;
+  const late = Date.parse("2026-12-02T00:00:00Z");
+  const delivered = markDelivered(ledger, "INV-0142", late);
+  assert.equal(delivered.ok, false);
+  assert.match(delivered.message, /due date/i);
+  const refunded = refundInvoice(ledger, "INV-0142", late);
+  assert.equal(refunded.ok, true);
+  assert.equal(refunded.ledger.balance, 1000);
+  const fundedLate = fundInvoice(funded(), "INV-0142", late);
+  assert.equal(fundedLate.ok, false);
 });
 
 test("parser emits schema-valid actions", () => {

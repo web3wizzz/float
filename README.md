@@ -4,7 +4,7 @@ Give your agents a float, not your keys.
 
 Float is a tUSD8 vault for the Aevum Builder Challenge. The owner deposits the stablecoin and writes a policy. An agent can pay only inside that policy: a per-transaction cap, a rolling day, an allowlist, an expiry, and pause or revoke. A sentence — from a person or from a parser — is only an intent. The vault is the authority.
 
-Network: **Aevum testnet, chain id 44005**. Not QDay Origin (44003). Native gas is tQDAY, 18 decimals. RPC, explorer, faucet, and the tUSD8 address live in one file: `packages/sdk/src/config.ts`. The token decimals there are marked **UNVERIFIED**. Do not copy the token address into another file.
+Network: **Aevum testnet, chain id 44005**. Not QDay Origin (44003). Native gas is tQDAY, 18 decimals. RPC, explorer, faucet, the tUSD8 address, and the token decimals live in one file: `packages/sdk/src/config.ts`. tUSD8 `decimals()` on that network is **6**. Do not copy the token address into another file. The deploy script reads the address and the decimals from that file.
 
 Vault, escrow, router, and auth addresses in that file are empty until you deploy. Live mode refuses to invent a transaction while they are empty.
 
@@ -50,9 +50,9 @@ forge build
 forge test
 ```
 
-`forge test` includes a case where a schedule is 10 hours late: one execution charges once, an immediate second call reverts `NotDue`, and the next interval is the second charge (`runs == 2`).
+`forge test` runs the unit tests, the fuzz tests, and the invariant suite. One case warps a schedule 10 hours: one execution charges once, an immediate second call reverts `NotDue`, and the next interval is the second charge (`runs == 2`).
 
-Local deploy (Anvil account #0 is the default key, local only):
+Local deploy (Anvil's default chain id, not 44005 — that id selects the real tUSD8 and will not deploy a mock). Anvil account #0 is the default key, local only:
 
 ```
 anvil
@@ -60,7 +60,16 @@ cd contracts
 forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:8545 --broadcast
 ```
 
-That writes `contracts/deployments/latest.json`. If `TUSD8_ADDRESS` is unset, the script deploys `MockTUSD8` (8 decimals, so `150e8` in the tests is 150 whole tokens). Do not deploy the mock on Aevum. After a real deploy, paste the addresses into `packages/sdk/src/config.ts` only.
+Aevum testnet. `aevum` is the RPC alias in `contracts/foundry.toml` (`https://rpc-test.qday.info`). Put `DEPLOYER_PRIVATE_KEY` in your shell, not in a file. The key must hold tQDAY. `OWNER_ADDRESS` is optional and defaults to the deployer.
+
+```
+cd contracts
+forge script script/Deploy.s.sol --rpc-url aevum --broadcast --verify --verifier blockscout --verifier-url https://explorer-test.qday.info/api
+```
+
+That writes `contracts/deployments/latest.json`. The script reads the token address and decimals from `packages/sdk/src/config.ts`. On chain 44005 it uses that token, checks `decimals()`, and refuses to deploy `MockTUSD8`. On any other chain, if `TUSD8_ADDRESS` is unset, it deploys `MockTUSD8` (6 decimals, so `150e6` in the tests is 150 whole tokens). After a real deploy, paste the vault, escrow, router, and auth addresses into `packages/sdk/src/config.ts` only.
+
+CLI and console amounts are whole tUSD8. A live transaction scales them with `tusd8Decimals`, so 150 tUSD8 is `150000000` base units.
 
 ## CLI
 
@@ -89,7 +98,7 @@ Not full x402 compliance.
 
 What matches the idea: the resource answers **402** with a price, chain, and `payTo`. The agent pays from the vault, retries with `X-Payment-Proof`, and a second use of that proof is rejected.
 
-What differs: the proof is a raw id, there is no facilitator `/verify` + `/settle`, and the sandbox amounts are whole tUSD8 rather than base units (`amount * 10^decimals` on chain). Network is `eip155:44005`. The token field is read from the SDK config.
+What differs: the proof is a raw id, there is no facilitator `/verify` + `/settle`, and the sandbox ledger prices whole tUSD8. The 402 body carries `extra.baseUnits` (`whole * 10^tusd8Decimals`) for the chain. Network is `eip155:44005`. The token field and decimals are read from the SDK config.
 
 ```
 node --experimental-strip-types agent/x402-demo/server.ts

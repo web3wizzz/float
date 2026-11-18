@@ -592,7 +592,7 @@ export function Console() {
                   <ConfigRow k="explorer" v={explorerUrl} />
                   <ConfigRow k="faucet" v={faucetUrl} />
                   <ConfigRow k="token" v={tusd8} />
-                  <ConfigRow k="decimals" v={`${tusd8Decimals} UNVERIFIED`} />
+                  <ConfigRow k="decimals" v={String(tusd8Decimals)} />
                   <ConfigRow k="vault" v={contracts.vault || "not deployed"} />
                   <ConfigRow k="wallet" v={isConnected ? `${shortAddr(wallet ?? "")} · ${walletChain ?? "—"}` : "not connected"} />
                 </dl>
@@ -865,8 +865,8 @@ export function Console() {
                 <p className="mt-1 text-sm text-muted">The resource answers 402 with a price. The agent pays from the vault, retries with the tx proof, and the server refuses a reused proof.</p>
                 <pre className="mt-3 overflow-x-auto rounded-lg bg-paper p-3 font-mono text-xs leading-relaxed text-muted">
 {`GET /v1/oracle
-← 402  price 25 tUSD8  payTo ${shortAddr(DIRECTORY[1].address)}
-← token tUSD8  chain ${chainId}  decimals ${tusd8Decimals} UNVERIFIED`}
+← 402  price 25 tUSD8  base ${wholeToBase(25).toString()}  payTo ${shortAddr(DIRECTORY[1].address)}
+← token tUSD8  chain ${chainId}  decimals ${tusd8Decimals}`}
                 </pre>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button type="button" className={primary} onClick={onBuy}>

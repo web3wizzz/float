@@ -38,6 +38,8 @@ export interface Schedule {
   runs: number;
   active: boolean;
   memo: string;
+  /** True when the agent opened it. Those reservations share one daily cap. */
+  fromAgent?: boolean;
 }
 
 export interface Invoice {
@@ -201,6 +203,20 @@ export function explainPolicy(agent: Agent, payee: string, amount: number, now: 
   return null;
 }
 
+function ignoredScheduleReason(reason: string, byAgent: boolean): boolean {
+  if (reason.startsWith("Daily limit.")) return true;
+  if (!byAgent && (reason === "Vault is paused." || reason === "Agent is paused.")) return true;
+  return false;
+}
+
+function outstandingAgentReserve(ledger: Ledger, agent: string): number {
+  const who = agent.toLowerCase();
+  return ledger.schedules.reduce((sum, schedule) => {
+    if (!schedule.active || !schedule.fromAgent || schedule.agent.toLowerCase() !== who) return sum;
+    return sum + schedule.amount * (schedule.maxRuns - schedule.runs);
+  }, 0);
+}
+
 function fail(ledger: Ledger, now: number, kind: FeedItem["kind"], title: string, detail: string): Result {
   const next = clone(ledger);
   push(next, now, { ok: false, kind, title, detail });
@@ -331,13 +347,14 @@ export function createSchedule(
   const next = clone(ledger);
   const agent = findAgent(next, input.agent);
   if (!agent || !agent.active) return fail(ledger, now, "blocked", "Schedule rejected", "No active agent.");
-  const reason = explainPolicy(agent, input.payee, input.amount, now, false);
-  if (reason && !reason.startsWith("Daily")) return fail(ledger, now, "blocked", "Schedule rejected", reason);
+  const byAgent = input.byAgent === true;
+  const reason = explainPolicy(agent, input.payee, input.amount, now, next.globalPaused);
+  if (reason && !ignoredScheduleReason(reason, byAgent)) return fail(ledger, now, "blocked", "Schedule rejected", reason);
   if (input.amount > agent.perTxLimit) return fail(ledger, now, "blocked", "Schedule rejected", `Per-transaction limit is ${agent.perTxLimit}.`);
   if (!Number.isInteger(input.maxRuns) || input.maxRuns <= 0) return fail(ledger, now, "blocked", "Schedule rejected", "Set a max number of runs.");
   if (input.intervalMs < MIN_INTERVAL_MS) return fail(ledger, now, "blocked", "Schedule rejected", "Minimum interval is 1 hour.");
   const obligation = input.amount * input.maxRuns;
-  if (input.byAgent && obligation > agent.dailyLimit) {
+  if (byAgent && outstandingAgentReserve(next, agent.address) + obligation > agent.dailyLimit) {
     return fail(ledger, now, "blocked", "Schedule rejected", "An agent cannot reserve more than its daily limit.");
   }
   if (obligation > next.balance || next.reserved > next.balance - obligation) {
@@ -356,6 +373,7 @@ export function createSchedule(
     runs: 0,
     active: true,
     memo: input.memo,
+    fromAgent: byAgent,
   });
   push(next, now, {
     ok: true,
@@ -399,6 +417,7 @@ export function fundInvoice(ledger: Ledger, invoiceId: string, now: number, agen
   const invoice = ledger.invoices.find((i) => i.id.toLowerCase() === invoiceId.toLowerCase() || String(i.numericId) === invoiceId);
   if (!invoice) return fail(ledger, now, "blocked", "Unknown invoice", invoiceId);
   if (invoice.status !== "open") return fail(ledger, now, "blocked", "Invoice not open", `${invoice.id} is ${invoice.status}.`);
+  if (now >= invoice.due) return fail(ledger, now, "blocked", "Invoice past due", "The due date has passed, so this invoice cannot be funded.");
   const paid = pay(
     ledger,
     {
@@ -424,6 +443,7 @@ export function markDelivered(ledger: Ledger, invoiceId: string, now: number): R
   const next = clone(ledger);
   const inv = next.invoices.find((i) => i.id === invoiceId);
   if (!inv || inv.status !== "funded") return fail(ledger, now, "blocked", "Cannot mark delivered", "Invoice must be funded first.");
+  if (now >= inv.due) return fail(ledger, now, "blocked", "Due date passed", "Delivery after the due date cannot block a refund.");
   inv.status = "delivered";
   inv.deliveredAt = now;
   push(next, now, { ok: true, kind: "escrow", title: `${inv.id} marked delivered`, detail: "Payer can confirm, or it auto-releases after 3 days." });

@@ -75,22 +75,37 @@ contract AgentVault is EIP712, ReentrancyGuard, Ownable {
     mapping(address agent => uint256) public nonces;
     mapping(uint256 id => Schedule) public schedules;
     uint256 public scheduleCount;
+    /// @dev Sum of remaining obligation on schedules the agent itself opened.
+    ///      Owner-opened schedules do not count, so the owner can still fund rent.
+    mapping(address agent => uint256) public agentReserved;
+    mapping(uint256 id => bool) public scheduleFromAgent;
 
     mapping(address agent => Rolling) private rolling;
 
     event Deposited(address indexed from, uint256 amount);
     event Withdrawn(address indexed to, uint256 amount);
-    event AgentRegistered(address indexed agent, uint128 perTxLimit, uint128 dailyLimit, uint64 expiry, bool allowAnyPayee);
+    event AgentRegistered(
+        address indexed agent, uint128 perTxLimit, uint128 dailyLimit, uint64 expiry, bool allowAnyPayee
+    );
     event AgentRevoked(address indexed agent);
     event AgentPaused(address indexed agent, bool paused);
     event GlobalPaused(bool paused);
     event PayeeUpdated(address indexed agent, address indexed payee, bool allowed);
-    event PolicyUpdated(address indexed agent, uint128 perTxLimit, uint128 dailyLimit, uint64 expiry, bool allowAnyPayee);
+    event PolicyUpdated(
+        address indexed agent, uint128 perTxLimit, uint128 dailyLimit, uint64 expiry, bool allowAnyPayee
+    );
     event AgentPaid(address indexed agent, address indexed payee, uint256 amount, bytes32 memo, address indexed caller);
     event EscrowFunded(address indexed agent, uint256 indexed invoiceId, address payee, uint256 amount);
     event AuthUpdated(address indexed auth);
     event EscrowUpdated(address indexed escrow);
-    event ScheduleCreated(uint256 indexed id, address indexed agent, address indexed payee, uint128 amount, uint64 interval, uint32 maxRuns);
+    event ScheduleCreated(
+        uint256 indexed id,
+        address indexed agent,
+        address indexed payee,
+        uint128 amount,
+        uint64 interval,
+        uint32 maxRuns
+    );
     event ScheduleExecuted(uint256 indexed id, uint32 runs, uint64 nextRun);
     event ScheduleCancelled(uint256 indexed id, uint256 releasedReserve);
 
@@ -127,7 +142,9 @@ contract AgentVault is EIP712, ReentrancyGuard, Ownable {
         EIP712("Float Vault", "1")
         Ownable(initialOwner)
     {
-        if (address(paymentToken) == address(0) || address(agentAuth) == address(0)) revert ZeroAddress();
+        if (address(paymentToken) == address(0) || address(agentAuth) == address(0)) {
+            revert ZeroAddress();
+        }
         token = paymentToken;
         auth = agentAuth;
     }
@@ -245,16 +262,8 @@ contract AgentVault is EIP712, ReentrancyGuard, Ownable {
 
     function fundInvoice(uint256 invoiceId) external nonReentrant {
         if (escrow == address(0)) revert EscrowNotSet();
-        (
-            address payee,
-            address payer,
-            uint256 amount,
-            ,
-            ,
-            ,
-            ,
-            InvoiceTypes.Status status
-        ) = IInvoiceEscrow(escrow).invoices(invoiceId);
+        (address payee, address payer, uint256 amount,,,,, InvoiceTypes.Status status) =
+            IInvoiceEscrow(escrow).invoices(invoiceId);
         if (payer != address(this)) revert NotInvoicePayer();
         if (status != InvoiceTypes.Status.Open) revert InvoiceNotOpen();
         _enforce(msg.sender, payee, amount);
@@ -283,16 +292,14 @@ contract AgentVault is EIP712, ReentrancyGuard, Ownable {
 
     /// @notice Owner, or the agent, opens a schedule. Missed intervals are not caught up:
     ///         `executeSchedule` pays once and sets the next run to now + interval.
-    /// @dev Agent-created schedules cannot reserve more than that agent's daily limit,
-    ///      so a hot key cannot lock the whole vault.
-    function createSchedule(
-        address agent,
-        address payee,
-        uint128 amount,
-        uint64 interval,
-        uint32 maxRuns,
-        bytes32 memo
-    ) external returns (uint256 id) {
+    /// @dev The sum of schedules an agent opens cannot reserve more than that agent's
+    ///      daily limit, so a hot key cannot lock the vault by opening many of them.
+    ///      A paused or globally paused agent cannot open one. An already-expired
+    ///      agent cannot either: the runs could never execute.
+    function createSchedule(address agent, address payee, uint128 amount, uint64 interval, uint32 maxRuns, bytes32 memo)
+        external
+        returns (uint256 id)
+    {
         if (msg.sender != owner() && msg.sender != agent) revert NotScheduleParty();
         if (!policies[agent].active) revert AgentNotActive(agent);
         if (payee == address(0)) revert ZeroAddress();
@@ -300,16 +307,25 @@ contract AgentVault is EIP712, ReentrancyGuard, Ownable {
         if (maxRuns == 0) revert MaxRunsZero();
         if (interval < MIN_INTERVAL) revert IntervalTooShort(MIN_INTERVAL, interval);
         Policy storage p = policies[agent];
+        if (p.expiry != 0 && block.timestamp > p.expiry) revert AgentExpired(agent, p.expiry);
         if (amount > p.perTxLimit) revert PerTxLimitExceeded(agent, amount, p.perTxLimit);
         if (!p.allowAnyPayee && !allowedPayee[agent][payee]) revert PayeeNotAllowed(agent, payee);
         uint256 obligation = uint256(amount) * uint256(maxRuns);
-        if (msg.sender == agent && obligation > p.dailyLimit) {
-            revert AgentReserveCap(obligation, p.dailyLimit);
+        bool fromAgent = msg.sender == agent;
+        if (fromAgent) {
+            if (globalPaused) revert GloballyPaused();
+            if (p.paused) revert AgentIsPaused(agent);
+            uint256 nextReserved = agentReserved[agent] + obligation;
+            if (nextReserved > p.dailyLimit) revert AgentReserveCap(nextReserved, p.dailyLimit);
         }
         uint256 bal = token.balanceOf(address(this));
         if (obligation > bal || reserved > bal - obligation) revert InsufficientReserve(bal, reserved + obligation);
         reserved += obligation;
         id = ++scheduleCount;
+        if (fromAgent) {
+            agentReserved[agent] += obligation;
+            scheduleFromAgent[id] = true;
+        }
         schedules[id] = Schedule({
             agent: agent,
             payee: payee,
@@ -332,6 +348,7 @@ contract AgentVault is EIP712, ReentrancyGuard, Ownable {
         uint256 remaining = uint256(s.amount) * uint256(s.maxRuns - s.runs);
         s.active = false;
         reserved -= remaining;
+        if (scheduleFromAgent[id]) agentReserved[s.agent] -= remaining;
         emit ScheduleCancelled(id, remaining);
     }
 
@@ -341,12 +358,18 @@ contract AgentVault is EIP712, ReentrancyGuard, Ownable {
         if (!s.active) revert ScheduleInactive(id);
         if (s.runs >= s.maxRuns) revert ScheduleExhausted(id);
         if (block.timestamp < s.nextRun) revert NotDue(id, s.nextRun);
-        // One payment for the whole gap since `nextRun`. Advancing from now (not from
-        // the stale nextRun) is what prevents a keeper from draining missed intervals.
-        _spend(s.agent, s.payee, s.amount, s.memo, true);
+        // One payment for the whole gap since `nextRun`. Bookkeeping moves first so a
+        // token callback cannot observe a schedule that is still due, and the next run
+        // is `now + interval` rather than one charge per missed interval.
+        uint256 amount = s.amount;
+        address schedAgent = s.agent;
+        address payee = s.payee;
+        bytes32 memo = s.memo;
         s.runs += 1;
         s.nextRun = uint64(block.timestamp) + s.interval;
         if (s.runs >= s.maxRuns) s.active = false;
+        if (scheduleFromAgent[id]) agentReserved[schedAgent] -= amount;
+        _spend(schedAgent, payee, amount, memo, true);
         emit ScheduleExecuted(id, s.runs, s.nextRun);
     }
 
