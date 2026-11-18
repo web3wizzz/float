@@ -78,6 +78,13 @@ const wagmiConfig = createConfig({
 
 const KEY = "float-ledger-v1";
 
+function paintTheme(next: "day" | "night") {
+  document.documentElement.dataset.theme = next;
+  document
+    .querySelector('meta[name="theme-color"]')
+    ?.setAttribute("content", next === "night" ? "#0E1916" : "#E4E8E2");
+}
+
 function loadLedger(raw: string | null): Ledger {
   if (!raw) return freshLedger();
   try {
@@ -142,6 +149,16 @@ export function Console({
     setNow(Date.now());
     setReady(true);
     setTheme(document.documentElement.dataset.theme === "night" ? "night" : "day");
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    function onScheme(event: MediaQueryListEvent) {
+      const saved = localStorage.getItem("float-theme");
+      if (saved === "day" || saved === "night") return;
+      const next = event.matches ? "night" : "day";
+      paintTheme(next);
+      setTheme(next);
+    }
+    media.addEventListener("change", onScheme);
+    return () => media.removeEventListener("change", onScheme);
   }, []);
 
   useEffect(() => {
@@ -505,11 +522,8 @@ export function Console({
 
   function toggleTheme() {
     const next = document.documentElement.dataset.theme === "night" ? "day" : "night";
-    document.documentElement.dataset.theme = next;
     localStorage.setItem("float-theme", next);
-    document
-      .querySelector('meta[name="theme-color"]')
-      ?.setAttribute("content", next === "night" ? "#0E1916" : "#E4E8E2");
+    paintTheme(next);
     setTheme(next);
   }
 
