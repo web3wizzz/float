@@ -83,14 +83,8 @@ test("injects x:creator tags when both creator values are set", () => {
 
 test("escapes x:creator values", () => {
   const tags = grokXCreatorHeadTags('"><script>', '1" onclick="alert(1)');
-  assert.equal(
-    tags[0],
-    '<meta property="x:creator" content="&quot;&gt;&lt;script&gt;">',
-  );
-  assert.equal(
-    tags[1],
-    '<meta property="x:creator:id" content="1&quot; onclick=&quot;alert(1)">',
-  );
+  assert.equal(tags[0], '<meta property="x:creator" content="&quot;&gt;&lt;script&gt;">');
+  assert.equal(tags[1], '<meta property="x:creator:id" content="1&quot; onclick=&quot;alert(1)">');
 });
 
 test("does not duplicate x:creator tags", () => {
@@ -208,7 +202,7 @@ test("snapshotOgIdentity stamps banner from public/x-banner.jpg", () => {
 });
 
 test("emits x:game:image for a public host when site.banner is set", () => {
-  const html = "<html><head><meta property=\"x:game:image\" content=\"old\"></head></html>";
+  const html = '<html><head><meta property="x:game:image" content="old"></head></html>';
   const out = injectGrokPwaHead(html, {
     host: "wild-race.grok.me",
     site: { title: "Wild Race", type: "x:game", card: "custom", banner: "/x-banner.jpg" },
@@ -251,7 +245,10 @@ test("published grok.me slug is still a title fallback", () => {
 });
 
 test("rejects Vercel system hosts as og:image origins", () => {
-  assert.equal(publicAppHost("01a020b6-803a-71a2-bb47-e2bec57eb9a2-662k8x1l1-xai-org.vercel.app"), "");
+  assert.equal(
+    publicAppHost("01a020b6-803a-71a2-bb47-e2bec57eb9a2-662k8x1l1-xai-org.vercel.app"),
+    "",
+  );
   assert.equal(publicAppHost("demo.vercel.app:443"), "");
   assert.equal(publicAppHost("vercel.app"), "");
   assert.equal(publicAppHost("wild-race.grok.me"), "wild-race.grok.me");
@@ -303,9 +300,12 @@ test("vercel Host without a public hostname emits no og:image", () => {
 });
 
 test("emits og:image for a public host and prefers a custom card", () => {
+  // A workspace that ships public/og.jpg must not leak into the placeholder case.
+  const bare = mkdtempSync(join(tmpdir(), "grok-og-bare-"));
   const placeholder = injectGrokPwaHead("<html><head></head></html>", {
     appName: "Wild Race",
     host: "wild-race.grok.me",
+    cwd: bare,
     site: { title: "Wild Race" },
   });
   assert.match(
@@ -324,8 +324,10 @@ test("emits og:image for a public host and prefers a custom card", () => {
 });
 
 test("placeholder og:image appends site.color when it is 6-digit hex", () => {
+  const bare = mkdtempSync(join(tmpdir(), "grok-og-color-"));
   const themed = injectGrokPwaHead("<html><head></head></html>", {
     host: "wild-race.grok.me",
+    cwd: bare,
     site: { title: "Wild Race", color: "#FF4D2E" },
   });
   assert.match(
@@ -335,6 +337,7 @@ test("placeholder og:image appends site.color when it is 6-digit hex", () => {
 
   const invalid = injectGrokPwaHead("<html><head></head></html>", {
     host: "wild-race.grok.me",
+    cwd: bare,
     site: { title: "Wild Race", color: "red" },
   });
   assert.doesNotMatch(invalid, /color=/);
@@ -347,9 +350,7 @@ test("placeholder og:image appends site.color when it is 6-digit hex", () => {
 });
 
 test("document title entities are not double-escaped on og:title", () => {
-  const out = injectGrokPwaHead(
-    "<html><head><title>Cats &amp; Dogs</title></head></html>",
-  );
+  const out = injectGrokPwaHead("<html><head><title>Cats &amp; Dogs</title></head></html>");
   assert.match(out, /property="og:title" content="Cats &amp; Dogs"/);
   assert.doesNotMatch(out, /Cats &amp;amp; Dogs/);
 });
