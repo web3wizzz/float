@@ -1,39 +1,175 @@
+/* Float tokens. One system: abyss desk, mineral slip, brass seal.
+   Synonym (Indian Type Foundry, Fontshare) and JetBrains Mono (OFL), self-hosted. */
+
+@font-face {
+  font-family: Synonym;
+  src: url("/fonts/synonym-400.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: Synonym;
+  src: url("/fonts/synonym-500.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: Synonym;
+  src: url("/fonts/synonym-600.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: Synonym;
+  src: url("/fonts/synonym-700.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/jetbrains-mono-400.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/jetbrains-mono-500.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
 @import "tailwindcss";
 
 @theme {
-  --font-display: "Bricolage Grotesque", "Instrument Sans", ui-sans-serif, sans-serif;
-  --font-sans: "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: Synonym, ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
-  --color-paper: #edf1ee;
-  --color-ink: #0e2a47;
-  --color-seal: #2450e6;
-  --color-treasury: #17785a;
-  --color-stamp: #d9962b;
-  --color-surface: color-mix(in srgb, var(--color-paper) 62%, white);
-  --color-surface-2: color-mix(in srgb, var(--color-ink) 8%, var(--color-paper));
-  --color-line: color-mix(in srgb, var(--color-ink) 16%, var(--color-paper));
-  --color-muted: color-mix(in srgb, var(--color-ink) 62%, var(--color-paper));
-  --radius-lg: 0.75rem;
+
+  --color-abyss: #0e1714;
+  --color-panel: #13201c;
+  --color-slip: #f4f0e6;
+  --color-field: #fffdf8;
+  --color-ink: #14201b;
+  --color-foam: #e8f0eb;
+  --color-mist: #9bb0a6;
+  --color-line: #2a3d35;
+  --color-line-slip: #d5cfc2;
+  --color-signal: #e2a53a;
+  --color-signal-ink: #1c1408;
+  --color-good: #8fcbb2;
+  --color-good-ink: #1b6b4a;
+  --color-bad: #e3846a;
+  --color-bad-ink: #9e341f;
+  --color-slip-muted: #3f4c46;
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --radius-sm: 2px;
+  --radius-md: 6px;
 }
 
 @layer base {
   html {
-    background: var(--color-paper);
-    color: var(--color-ink);
+    background: var(--color-abyss);
+    color: var(--color-foam);
+    color-scheme: dark;
+    overflow-x: clip;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    scroll-padding-bottom: 5.5rem;
   }
   body {
     font-family: var(--font-sans);
+    font-size: 16px;
     line-height: 1.5;
     min-height: 100vh;
+    overflow-x: clip;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
-  button:not(:disabled),
-  [role="button"]:not(:disabled) {
-    cursor: pointer;
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+  p {
+    text-wrap: pretty;
   }
   ::selection {
-    background: var(--color-seal);
-    color: var(--color-paper);
+    background: var(--color-signal);
+    color: var(--color-signal-ink);
   }
+  :focus-visible {
+    outline: 2px solid var(--color-signal);
+    outline-offset: 2px;
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.slip {
+  color-scheme: light;
+}
+
+.pressable {
+  transition:
+    transform 140ms var(--ease-out),
+    background-color 150ms var(--ease-out),
+    color 150ms var(--ease-out),
+    border-color 150ms var(--ease-out);
+}
+.pressable:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .btn-primary:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-signal) 86%, white);
+  }
+  .btn-desk:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-foam) 8%, transparent);
+  }
+  .btn-slip:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-ink) 6%, transparent);
+  }
+  .btn-danger-desk:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-bad) 14%, transparent);
+  }
+  .btn-danger-slip:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-bad-ink) 8%, transparent);
+  }
+  .nav-link:hover {
+    color: var(--color-foam);
+  }
+}
+
+.waterline {
+  transform-origin: left center;
+  transition: transform 220ms var(--ease-out);
+}
+
+.skeleton {
+  background: color-mix(in srgb, var(--color-ink) 10%, var(--color-slip));
+  animation: skel 1.4s var(--ease-out) infinite;
+}
+
+@keyframes skel {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.feed-item {
+  animation: feed-in 180ms var(--ease-out);
 }
 
 @keyframes feed-in {
@@ -47,12 +183,35 @@
   }
 }
 
-.feed-item {
-  animation: feed-in 180ms ease;
+.skip {
+  position: absolute;
+  left: 0.75rem;
+  top: 0.75rem;
+  z-index: 40;
+  transform: translateY(-160%);
+  border-radius: var(--radius-md);
+  background: var(--color-signal);
+  color: var(--color-signal-ink);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.skip:focus {
+  transform: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .feed-item {
+  .pressable,
+  .waterline,
+  .feed-item,
+  .skeleton {
     animation: none;
+    transition: none;
+  }
+  .pressable:active:not(:disabled) {
+    transform: none;
+  }
+  .feed-item {
+    transform: none;
   }
 }
