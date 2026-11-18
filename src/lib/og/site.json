@@ -1,0 +1,4 @@
+{
+  "description": "Fund a tUSD8 vault and give agents capped, revocable spending rights on Aevum.",
+  "card": "custom"
+}
