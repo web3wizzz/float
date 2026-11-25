@@ -121,11 +121,11 @@ node --experimental-strip-types agent/x402-demo/client.ts
 
 ## Web console
 
-Simulation is the default, so the demo runs without a wallet. Switch to **Live (Aevum)** to connect an injected wallet, switch to chain 44005, and send real transactions to the vault in `packages/sdk/src/config.ts`.
+Simulation is the default, so the demo runs without a wallet. Switch to **Live (Aevum)** and use **Connect wallet** to send on chain 44005 to the vault in `packages/sdk/src/config.ts`. If the wallet is not connected, Send, Invoice, and Add agent stay off.
 
-The operator path includes **Try Northwind**: a payment to a payee that was never allowlisted. Simulation records `PayeeNotAllowed`. Live mode asks the contract and shows that revert from `simulateContract`.
+The product opens as a conversation. You tell the agent what to pay. It answers with a review card, and nothing moves until you approve. Wallet, invoices, agents, and activity sit beside that thread.
 
-The bar at the bottom only parses text. It shows the typed intent. Execute goes through the same checks as the buttons.
+The guided tour is a separate page at `/tour`. Open it from Settings (**Open guided tour**). It is not on Home. **Try Northwind** is a step there: a payment to a payee that was never allowlisted. Simulation records `PayeeNotAllowed`. Live mode asks the contract and shows that revert.
 
 ## Post-quantum
 

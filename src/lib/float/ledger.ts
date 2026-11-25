@@ -61,6 +61,8 @@ export interface FeedItem {
   kind: "vault" | "policy" | "pay" | "blocked" | "escrow" | "schedule" | "x402";
   title: string;
   detail: string;
+  /** "you" for the account holder, otherwise the agent label. */
+  actor?: string;
 }
 
 export interface X402Resource {
@@ -242,6 +244,30 @@ export function withdraw(ledger: Ledger, amount: number, now: number): Result {
   return { ledger: next, ok: true, message: `Withdrew ${amount} tUSD8.` };
 }
 
+/** A person paying from their own balance. No agent mandate is consulted. */
+export function sendAsYou(
+  ledger: Ledger,
+  input: { payee: string; amount: number; memo: string; kind?: FeedItem["kind"]; fromReserve?: boolean; title?: string },
+  now: number,
+): Result {
+  if (ledger.globalPaused) return fail(ledger, now, "blocked", "Vault is paused", "Resume the vault before sending.");
+  if (!Number.isInteger(input.amount) || input.amount <= 0) {
+    return fail(ledger, now, "blocked", "Send rejected", "Enter a positive whole number of tUSD8.");
+  }
+  if (!/^0x[0-9a-fA-F]{40}$/.test(input.payee)) return fail(ledger, now, "blocked", "Send rejected", "Recipient must be an address.");
+  const next = clone(ledger);
+  if (input.fromReserve) {
+    if (next.reserved < input.amount) return fail(ledger, now, "blocked", "Reserve short", "Schedule reserve is smaller than this run.");
+    next.reserved -= input.amount;
+  } else if (input.amount > available(next)) {
+    return fail(ledger, now, "blocked", "Not enough to send", `${available(next)} tUSD8 is free. ${next.reserved} is reserved for schedules.`);
+  }
+  next.balance -= input.amount;
+  const title = input.title ?? `Sent ${input.amount} tUSD8 to ${labelOf(input.payee)}`;
+  push(next, now, { ok: true, kind: input.kind ?? "pay", title, detail: input.memo || "No memo.", actor: "you" });
+  return { ledger: next, ok: true, message: title };
+}
+
 export function registerAgent(
   ledger: Ledger,
   input: { address?: string; label?: string; perTxLimit: number; dailyLimit: number; allow: string[]; allowAny?: boolean; expiry?: number },
@@ -341,10 +367,41 @@ export function pay(ledger: Ledger, input: PayInput, now: number): Result {
 
 export function createSchedule(
   ledger: Ledger,
-  input: { agent?: string; payee: string; amount: number; intervalMs: number; maxRuns: number; memo: string; byAgent?: boolean },
+  input: { agent?: string; payee: string; amount: number; intervalMs: number; maxRuns: number; memo: string; byAgent?: boolean; byYou?: boolean },
   now: number,
 ): Result {
   const next = clone(ledger);
+  if (input.byYou) {
+    if (next.globalPaused) return fail(ledger, now, "blocked", "Vault is paused", "Resume the vault before scheduling.");
+    if (!Number.isInteger(input.amount) || input.amount <= 0) return fail(ledger, now, "blocked", "Schedule rejected", "Enter a positive whole number of tUSD8.");
+    if (!/^0x[0-9a-fA-F]{40}$/.test(input.payee)) return fail(ledger, now, "blocked", "Schedule rejected", "Recipient must be an address.");
+    if (!Number.isInteger(input.maxRuns) || input.maxRuns <= 0) return fail(ledger, now, "blocked", "Schedule rejected", "Set a max number of runs.");
+    if (input.intervalMs < MIN_INTERVAL_MS) return fail(ledger, now, "blocked", "Schedule rejected", "Minimum interval is 1 hour.");
+    const obligation = input.amount * input.maxRuns;
+    if (obligation > available(next)) return fail(ledger, now, "blocked", "Schedule rejected", "Vault balance cannot cover the reserved runs.");
+    next.reserved += obligation;
+    const id = next.nextSchedule++;
+    next.schedules.push({
+      id,
+      agent: "",
+      payee: input.payee,
+      amount: input.amount,
+      intervalMs: input.intervalMs,
+      nextRun: now,
+      maxRuns: input.maxRuns,
+      runs: 0,
+      active: true,
+      memo: input.memo,
+    });
+    push(next, now, {
+      ok: true,
+      kind: "schedule",
+      title: `Schedule #${id} · ${input.amount} tUSD8`,
+      detail: `${labelOf(input.payee)} · every ${Math.round(input.intervalMs / HOUR_MS)}h · ${input.maxRuns} runs · ${obligation} reserved.`,
+      actor: "you",
+    });
+    return { ledger: next, ok: true, message: `Schedule #${id} created.` };
+  }
   const agent = findAgent(next, input.agent);
   if (!agent || !agent.active) return fail(ledger, now, "blocked", "Schedule rejected", "No active agent.");
   const byAgent = input.byAgent === true;
@@ -392,7 +449,9 @@ export function executeSchedule(ledger: Ledger, id: number, now: number): Result
   if (now < peek.nextRun) {
     return fail(ledger, now, "blocked", "Not due", "This run was already executed. Missed intervals are not charged twice.");
   }
-  const paid = pay(ledger, { agent: peek.agent, payee: peek.payee, amount: peek.amount, memo: peek.memo || `schedule #${id}`, kind: "schedule", fromReserve: true }, now);
+  const paid = peek.agent
+    ? pay(ledger, { agent: peek.agent, payee: peek.payee, amount: peek.amount, memo: peek.memo || `schedule #${id}`, kind: "schedule", fromReserve: true }, now)
+    : sendAsYou(ledger, { payee: peek.payee, amount: peek.amount, memo: peek.memo || `schedule #${id}`, kind: "schedule", fromReserve: true, title: `Sent ${peek.amount} tUSD8 to ${labelOf(peek.payee)}` }, now);
   if (!paid.ok) return paid;
   const next = paid.ledger;
   const schedule = next.schedules.find((s) => s.id === id)!;
@@ -418,18 +477,10 @@ export function fundInvoice(ledger: Ledger, invoiceId: string, now: number, agen
   if (!invoice) return fail(ledger, now, "blocked", "Unknown invoice", invoiceId);
   if (invoice.status !== "open") return fail(ledger, now, "blocked", "Invoice not open", `${invoice.id} is ${invoice.status}.`);
   if (now >= invoice.due) return fail(ledger, now, "blocked", "Invoice past due", "The due date has passed, so this invoice cannot be funded.");
-  const paid = pay(
-    ledger,
-    {
-      agent: agentId,
-      payee: invoice.payee,
-      amount: invoice.amount,
-      memo: invoice.id,
-      kind: "escrow",
-      title: `Escrow hold · ${invoice.amount} tUSD8 for ${invoice.id}`,
-    },
-    now,
-  );
+  const asYou = agentId === "you";
+  const paid = asYou
+    ? sendAsYou(ledger, { payee: invoice.payee, amount: invoice.amount, memo: invoice.id, kind: "escrow", title: `Escrow hold · ${invoice.amount} tUSD8 for ${invoice.id}` }, now)
+    : pay(ledger, { agent: agentId, payee: invoice.payee, amount: invoice.amount, memo: invoice.id, kind: "escrow", title: `Escrow hold · ${invoice.amount} tUSD8 for ${invoice.id}` }, now);
   if (!paid.ok) return paid;
   const next = paid.ledger;
   const inv = next.invoices.find((i) => i.id === invoice.id)!;
@@ -468,6 +519,39 @@ export function refundInvoice(ledger: Ledger, invoiceId: string, now: number): R
   next.balance += inv.amount;
   push(next, now, { ok: true, kind: "escrow", title: `Refunded ${inv.id}`, detail: `${inv.amount} tUSD8 returned to the vault.` });
   return { ledger: next, ok: true, message: `${inv.id} refunded.` };
+}
+
+export function openInvoice(
+  ledger: Ledger,
+  input: { id: string; payee: string; amount: number; metadata: string; due?: number },
+  now: number,
+): Result {
+  const id = input.id.trim();
+  if (!id) return fail(ledger, now, "blocked", "Invoice rejected", "Give the invoice an id.");
+  if (ledger.invoices.some((item) => item.id.toLowerCase() === id.toLowerCase())) {
+    return fail(ledger, now, "blocked", "Invoice rejected", `${id} already exists.`);
+  }
+  if (!Number.isInteger(input.amount) || input.amount <= 0) return fail(ledger, now, "blocked", "Invoice rejected", "Amount must be a positive whole number of tUSD8.");
+  if (!/^0x[0-9a-fA-F]{40}$/.test(input.payee)) return fail(ledger, now, "blocked", "Invoice rejected", "Payee must be an address.");
+  const next = clone(ledger);
+  const numericId = next.invoices.reduce((max, item) => Math.max(max, item.numericId), 0) + 1;
+  next.invoices.unshift({
+    id,
+    numericId,
+    payee: input.payee,
+    amount: input.amount,
+    due: input.due ?? now + 14 * DAY_MS,
+    metadata: input.metadata.trim() || "Payment request",
+    status: "open",
+  });
+  push(next, now, {
+    ok: true,
+    kind: "escrow",
+    title: `Invoice ${id}`,
+    detail: `${input.amount} tUSD8 to ${labelOf(input.payee)}.`,
+    actor: "you",
+  });
+  return { ledger: next, ok: true, message: `${id} is open.` };
 }
 
 export function disputeInvoice(ledger: Ledger, invoiceId: string, now: number): Result {
