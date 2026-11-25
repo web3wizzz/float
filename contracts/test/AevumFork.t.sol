@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
+import {SdkConfig} from "../script/SdkConfig.sol";
 
 interface IDecimals {
     function decimals() external view returns (uint8);
@@ -11,15 +12,14 @@ interface IDecimals {
 ///         forge test --match-contract AevumForkTest
 ///         The rpc alias `aevum` is contracts/foundry.toml.
 contract AevumForkTest is Test {
-    address internal constant TUSD8 = 0x456569838f1d43009A91ebA4263147Afd7233483;
-
     function test_tusd8_isSixDecimals() public {
         if (!vm.envOr("AEVUM_FORK", false)) {
             vm.skip(true);
             return;
         }
-        if (block.chainid != 44005) vm.createSelectFork("aevum");
-        assertEq(block.chainid, 44005);
-        assertEq(IDecimals(TUSD8).decimals(), 6);
+        SdkConfig.Aevum memory cfg = SdkConfig.read();
+        if (block.chainid != cfg.chainId) vm.createSelectFork("aevum");
+        assertEq(block.chainid, cfg.chainId);
+        assertEq(IDecimals(cfg.tusd8).decimals(), cfg.decimals);
     }
 }

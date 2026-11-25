@@ -104,8 +104,8 @@ export function wholeToBase(amount: number): bigint {
   return BigInt(amount) * 10n ** BigInt(tusd8Decimals);
 }
 
-const receiveWithAuthorizationTypes = {
-  ReceiveWithAuthorization: [
+const transferWithAuthorizationTypes = {
+  TransferWithAuthorization: [
     { name: "from", type: "address" },
     { name: "to", type: "address" },
     { name: "value", type: "uint256" },
@@ -116,9 +116,9 @@ const receiveWithAuthorizationTypes = {
 } as const;
 
 /**
- * Fund the vault with tUSD8's EIP-3009 receiveWithAuthorization.
- * The signer authorizes the token; this submits that authorization as a legacy transaction.
- * Tokens land on the vault address. The vault spends `balanceOf`, so no vault.deposit call is required.
+ * Fund the vault with tUSD8 transferWithAuthorization.
+ * receiveWithAuthorization requires the caller to be the recipient, so the owner cannot send it to the vault.
+ * transferWithAuthorization lets the owner submit the authorization and name the vault as `to`.
  */
 export async function fundVaultWithAuthorization(publicClient: PublicClient, wallet: WalletClient, amount: bigint): Promise<TxResult> {
   const vault = requireVault();
@@ -132,8 +132,8 @@ export async function fundVaultWithAuthorization(publicClient: PublicClient, wal
     const signature = await wallet.signTypedData({
       account,
       domain: { name: "tUSD8", version: "2", chainId, verifyingContract: tusd8 },
-      types: receiveWithAuthorizationTypes,
-      primaryType: "ReceiveWithAuthorization",
+      types: transferWithAuthorizationTypes,
+      primaryType: "TransferWithAuthorization",
       message: { from: account.address, to: vault, value: amount, validAfter: 0n, validBefore, nonce },
     });
     const { v, r, s } = hexToSignature(signature);
@@ -141,7 +141,7 @@ export async function fundVaultWithAuthorization(publicClient: PublicClient, wal
       account,
       address: tusd8,
       abi: eip3009Abi,
-      functionName: "receiveWithAuthorization",
+      functionName: "transferWithAuthorization",
       args: [account.address, vault, amount, 0n, validBefore, nonce, Number(v), r, s],
       chain: aevumTestnet,
     });
@@ -155,6 +155,13 @@ export interface ChainPayment {
   agent: Address;
   payee: Address;
   amount: bigint;
+}
+
+/** Free tUSD8 in the vault, in base units. Reserved schedule funds are excluded. */
+export async function readVaultAvailable(client: PublicClient): Promise<bigint | null> {
+  const vault = vaultAddress();
+  if (!vault) return null;
+  return client.readContract({ address: vault, abi: agentVaultAbi, functionName: "availableBalance" });
 }
 
 /** AgentPaid events from the deploy block, in ranges of at most 1,000 blocks. */
@@ -226,6 +233,7 @@ export async function registerOnVault(
   perTx: bigint,
   daily: bigint,
   allow: readonly Address[],
+  expirySeconds = 0n,
 ): Promise<TxResult> {
   const vault = requireVault();
   if (typeof vault !== "string") return vault;
@@ -237,7 +245,7 @@ export async function registerOnVault(
     address: vault,
     abi: agentVaultAbi,
     functionName: "registerAgent",
-    args: [agent, perTx, daily, 0n, false],
+    args: [agent, perTx, daily, expirySeconds, false],
     chain: aevumTestnet,
   });
   if (!registered.ok) return registered;
@@ -273,6 +281,28 @@ export async function payFromVault(
     address: vault,
     abi: agentVaultAbi,
     functionName: "pay",
+    args: [payee, amount, memoBytes(memo)],
+    chain: aevumTestnet,
+  });
+}
+
+/** Owner spend. Does not use an agent policy. The live vault must include `payAsOwner`. */
+export async function payAsOwnerOnVault(
+  publicClient: PublicClient,
+  wallet: WalletClient,
+  payee: Address,
+  amount: bigint,
+  memo: string,
+): Promise<TxResult> {
+  const vault = requireVault();
+  if (typeof vault !== "string") return vault;
+  const account = accountOf(wallet);
+  if (!("address" in account)) return account;
+  return simulateAndSend(publicClient, { writeContract: wallet.writeContract.bind(wallet), account }, {
+    account,
+    address: vault,
+    abi: agentVaultAbi,
+    functionName: "payAsOwner",
     args: [payee, amount, memoBytes(memo)],
     chain: aevumTestnet,
   });

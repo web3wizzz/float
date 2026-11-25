@@ -43,13 +43,13 @@ import {
   createScheduleOnVault,
   depositToVault,
   executeScheduleOnVault,
-  fundInvoiceOnVault,
   fundVaultWithAuthorization,
   pauseAgentOnVault,
   pauseVaultOnVault,
-  payFromVault,
+  payAsOwnerOnVault,
   registerOnVault,
   revokeOnVault,
+  readVaultAvailable,
   readVaultPayments,
   wholeToBase,
   withdrawFromVault,
@@ -152,6 +152,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
   const [agentAddr, setAgentAddr] = useState(DEFAULT_AGENT.address);
   const [allow, setAllow] = useState<string[]>([DIRECTORY[0].address, DIRECTORY[1].address]);
   const [showAdd, setShowAdd] = useState(false);
+  const [agentError, setAgentError] = useState<string | null>(null);
   const [utterance, setUtterance] = useState("send 5 tUSD8 to DataRelay every week");
   const [pending, setPending] = useState<AgentAction | null>(null);
   const [thread, setThread] = useState<ThreadMsg[]>([]);
@@ -196,6 +197,12 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
   }, [ledger, ready]);
 
   useEffect(() => {
+    if (!ready || live) return;
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [ready, live]);
+
+  useEffect(() => {
     if (!live || !publicClient) return;
     let cancel = false;
     void readVaultPayments(publicClient)
@@ -222,7 +229,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
       if (command || (event.key === "/" && !typing)) {
         event.preventDefault();
         setTab("chat");
-        composerRef.current?.focus();
+        requestAnimationFrame(() => composerRef.current?.focus());
       }
     }
     window.addEventListener("keydown", onKey);
@@ -255,7 +262,10 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
     title: string,
     run: (pc: NonNullable<typeof publicClient>, wc: NonNullable<typeof walletClient>) => Promise<TxResult>,
   ) {
-    if (!publicClient || !walletClient) return;
+    if (!publicClient || !walletClient) {
+      record({ ok: false, title, detail: "Connect a wallet on Aevum before this can send.", hashes: [] });
+      return;
+    }
     if (walletChain !== chainId) {
       try {
         await switchChainAsync({ chainId });
@@ -269,6 +279,11 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
       const result = await run(publicClient, walletClient);
       if (result.ok) {
         record({ ok: true, title, detail: result.hashes.map((hash) => `${explorerUrl}/tx/${hash}`).join(" "), hashes: [...result.hashes] });
+        const hash = result.hashes[0];
+        if (hash) {
+          await publicClient.waitForTransactionReceipt({ hash });
+          setChainPays(await readVaultPayments(publicClient));
+        }
       } else {
         record({ ok: false, title, detail: result.reason, hashes: [] });
       }
@@ -316,20 +331,24 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
 
   function onSendYou(payee: string, amount: number, noteText: string) {
     if (live) {
-      void liveSend("Send money", (pc, wc) => payFromVault(pc, wc, asAddress(payee), wholeToBase(amount), noteText));
+      void liveSend("Send money", (pc, wc) => payAsOwnerOnVault(pc, wc, asAddress(payee), wholeToBase(amount), noteText));
       return;
     }
     apply(sendAsYou(ledger, { payee, amount, memo: noteText }, at()));
   }
 
-  function onScheduleYou(payee: string, amount: number, intervalMs: number, noteText: string) {
-    const runs = intervalMs >= 7 * DAY_MS ? 12 : 6;
+  function onScheduleYou(payee: string, amount: number, intervalMs: number, noteText: string, maxRuns?: number) {
+    const runs = maxRuns ?? (intervalMs >= 7 * DAY_MS ? 12 : 6);
     if (live) {
+      if (!agent?.active) {
+        record({ ok: false, title: "Schedule", detail: "Add an agent first. A repeating payment on Aevum uses that agent's mandate.", hashes: [] });
+        return;
+      }
       void liveSend("Schedule", (pc, wc) =>
         createScheduleOnVault(
           pc,
           wc,
-          asAddress(agent?.address ?? DEFAULT_AGENT.address),
+          asAddress(agent.address),
           asAddress(payee),
           wholeToBase(amount),
           BigInt(Math.max(3600, Math.floor(intervalMs / 1000))),
@@ -344,25 +363,35 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
 
   function onPayInvoice(id: string) {
     if (live) {
-      const inv = ledger.invoices.find((item) => item.id === id);
-      void liveSend(`Pay ${id}`, (pc, wc) => fundInvoiceOnVault(pc, wc, BigInt(inv?.numericId ?? 1)));
+      record({
+        ok: false,
+        title: "Invoice",
+        detail: "On Aevum the payee opens the invoice. Fund the on-chain id. A local draft is not an invoice number.",
+        hashes: [],
+      });
       return;
     }
     apply(fundInvoice(ledger, id, at(), "you"));
   }
 
   function addMandate(input?: { label: string; address: string; perTxLimit: number; dailyLimit: number; allow: string[]; expiry: number }) {
+    if (!input && !isHexAddress(agentAddr)) {
+      setAgentError("Enter a valid agent address.");
+      return;
+    }
     const body = input ?? {
       label: agentLabel.trim() || DEFAULT_AGENT.label,
-      address: isHexAddress(agentAddr) ? agentAddr : DEFAULT_AGENT.address,
+      address: agentAddr,
       perTxLimit: Number(perTx),
       dailyLimit: Number(daily),
       allow,
       expiry: expiryDays ? at() + Number(expiryDays) * DAY_MS : 0,
     };
+    setAgentError(null);
     if (live) {
+      const expirySeconds = body.expiry > 0 ? BigInt(Math.floor(body.expiry / 1000)) : 0n;
       void liveSend("Add agent", (pc, wc) =>
-        registerOnVault(pc, wc, asAddress(body.address), wholeToBase(body.perTxLimit), wholeToBase(body.dailyLimit), body.allow.filter(isHexAddress)),
+        registerOnVault(pc, wc, asAddress(body.address), wholeToBase(body.perTxLimit), wholeToBase(body.dailyLimit), body.allow.filter(isHexAddress), expirySeconds),
       );
       return;
     }
@@ -372,7 +401,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
 
   function onBuy() {
     if (live) {
-      void liveSend("Buy oracle", (pc, wc) => payFromVault(pc, wc, asAddress(DIRECTORY[1].address), wholeToBase(25), "x402"));
+      record({ ok: false, title: "Oracle", detail: "A live agent payment has to be signed by that agent. Use the float CLI, not the owner wallet.", hashes: [] });
       return;
     }
     const result = buyX402(ledger, "oracle", at());
@@ -381,7 +410,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
 
   function onNorthwind() {
     if (live) {
-      void liveSend("Try Northwind", (pc, wc) => payFromVault(pc, wc, asAddress(DIRECTORY[2].address), wholeToBase(10), "northwind"));
+      record({ ok: false, title: "Northwind", detail: "This check is the agent's allowlist. Use simulation, or the agent's own key.", hashes: [] });
       return;
     }
     apply(pay(ledger, { payee: DIRECTORY[2].address, amount: 10, memo: "northwind" }, at()));
@@ -389,7 +418,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
 
   function onBlock() {
     if (live) {
-      void liveSend("Try 180", (pc, wc) => payFromVault(pc, wc, asAddress(DIRECTORY[0].address), wholeToBase(180), "over per-tx"));
+      record({ ok: false, title: "Limit", detail: "This check is the agent's per-payment cap. Use simulation, or the agent's own key.", hashes: [] });
       return;
     }
     apply(pay(ledger, { payee: DIRECTORY[0].address, amount: 180, memo: "over per-tx" }, at()));
@@ -414,8 +443,12 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
 
   function checkIntent(action: AgentAction): { ok: boolean; line: string } {
     if (action.type === "balance") return { ok: true, line: "This only reads your balance." };
-    if (live && (action.type === "pay" || action.type === "schedule")) {
-      return { ok: true, line: "This sends on Aevum after you confirm." };
+    if (live && action.type === "schedule") {
+      if (!agent?.active) return { ok: false, line: "Add an agent. A repeating payment on Aevum uses that mandate." };
+      return { ok: true, line: `Repeats through ${agent.label}. Its per-payment and daily limits apply. ${action.maxRuns} runs.` };
+    }
+    if (live && action.type === "pay") {
+      return { ok: true, line: "Your payment on Aevum. No agent limit. Reserved funds stay locked." };
     }
     if (action.type === "pay") {
       const inv = action.memo ? ledger.invoices.find((item) => item.id === action.memo) : undefined;
@@ -430,7 +463,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
       const obligation = action.amount * action.maxRuns;
       if (ledger.globalPaused) return { ok: false, line: "The vault is paused." };
       if (obligation > available(ledger)) return { ok: false, line: `Reserving ${formatTusd(obligation)} tUSD8 would exceed your free balance.` };
-      return { ok: true, line: `Your repeating payment. ${formatTusd(obligation)} tUSD8 stays reserved. No agent limit.` };
+      return { ok: true, line: `Your repeating payment. ${action.maxRuns} runs reserve ${formatTusd(obligation)} tUSD8. No agent limit in simulation.` };
     }
     if (!agent?.active) return { ok: false, line: "Add an agent before this can run." };
     if (action.type === "revoke") return { ok: true, line: `Revoke ${agent.label}. Further spends from it stop.` };
@@ -484,7 +517,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
       setTab("activity");
       return;
     }
-    onScheduleYou(action.payee, action.amount, action.everyMs, action.memo ?? "recurring");
+    onScheduleYou(action.payee, action.amount, action.everyMs, action.memo ?? "recurring", action.maxRuns);
     setTab("send");
     setSendMode("repeat");
   }
@@ -587,6 +620,18 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
     }
     if (parsed.action.type === "balance") {
       setPending(null);
+      const youId = Date.now();
+      if (live && publicClient) {
+        void readVaultAvailable(publicClient).then((free) => {
+          const line =
+            free == null
+              ? "No vault is available on Aevum yet."
+              : `Free on Aevum: ${(Number(free) / 10 ** tusd8Decimals).toLocaleString("en-US", { maximumFractionDigits: tusd8Decimals })} tUSD8. The sandbox balance is not this number.`;
+          setThread((prev) => [...prev, { id: youId, role: "you", text: trimmed }, { id: youId + 1, role: "agent", text: line }]);
+        });
+        setUtterance("");
+        return;
+      }
       const line = `Your balance is ${formatTusd(ledger.balance)} tUSD8. ${formatTusd(available(ledger))} is free.${agent?.active ? ` ${agent.label} can spend inside its mandate.` : " No agent is active."}`;
       setThread((prev) => [
         ...prev,
@@ -905,7 +950,13 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
               }
               apply(executeSchedule(ledger, id, at()));
             }}
-            onCancel={(id) => apply(cancelSchedule(ledger, id, at()))}
+            onCancel={(id) => {
+              if (live) {
+                record({ ok: false, title: "Cancel", detail: "This list is the sandbox. An Aevum schedule keeps running until it is cancelled on chain.", hashes: [] });
+                return;
+              }
+              apply(cancelSchedule(ledger, id, at()));
+            }}
           />
           </div>
         ) : null}
@@ -952,6 +1003,10 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
                   </label>
                 </div>
                 <button type="button" className={`${primary} mt-3`} disabled={!!liveHold} title={liveHold ?? undefined} onClick={() => {
+                    if (live) {
+                      setNote("On Aevum the payee opens the invoice. A draft here is not an on-chain id.");
+                      return;
+                    }
                     apply(openInvoice(ledger, { id: draftId, payee: draftPayee, amount: Number(draftAmt), metadata: draftMemo || `${labelOf(draftPayee)} invoice` }, at()));
                     setShowRequest(false);
                   }}>
@@ -1089,6 +1144,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
                 <button type="button" className={`${primary} mt-3`} disabled={!ready || busy || !!liveHold} title={liveHold ?? undefined} onClick={() => addMandate()}>
                   Create mandate
                 </button>
+                {agentError ? <p className="mt-2 text-xs text-stamp">{agentError}</p> : null}
                 {liveHold ? <p className="mt-2 text-xs text-muted">{liveHold}</p> : null}
               </section>
             ) : null}
@@ -1567,7 +1623,7 @@ function SendPanel({
         </dl>
         <p className="mt-4 text-sm text-muted">
           {review.repeat
-            ? "This repeating send is yours. It reserves the full run from your balance. No agent limit applies."
+            ? `Repeats ${Number(every) >= 7 * DAY_MS ? "weekly" : Number(every) >= DAY_MS ? "daily" : "hourly"}, ${Number(every) >= 7 * DAY_MS ? 12 : Number(every) >= DAY_MS ? 24 : 6} times, through an agent mandate on Aevum.`
             : "This payment is yours. No agent spending limit applies. Live gas, if any, is tQDAY and is not taken from this balance."}
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
