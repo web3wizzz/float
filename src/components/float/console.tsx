@@ -44,11 +44,13 @@ import {
   depositToVault,
   executeScheduleOnVault,
   fundInvoiceOnVault,
+  fundVaultWithAuthorization,
   pauseAgentOnVault,
   pauseVaultOnVault,
   payFromVault,
   registerOnVault,
   revokeOnVault,
+  readVaultPayments,
   wholeToBase,
   withdrawFromVault,
   type TxResult,
@@ -171,6 +173,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
   const [lastProof, setLastProof] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("simulation");
   const [receipts, setReceipts] = useState<Receipt[]>([]);
+  const [chainPays, setChainPays] = useState<Awaited<ReturnType<typeof readVaultPayments>>>([]);
   const [busy, setBusy] = useState(false);
   const { address: wallet, chainId: walletChain, isConnected } = useAccount();
   const { connect, connectors, isPending } = useConnect();
@@ -191,6 +194,21 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
     if (!ready) return;
     localStorage.setItem(KEY, JSON.stringify(ledger));
   }, [ledger, ready]);
+
+  useEffect(() => {
+    if (!live || !publicClient) return;
+    let cancel = false;
+    void readVaultPayments(publicClient)
+      .then((rows) => {
+        if (!cancel) setChainPays(rows);
+      })
+      .catch(() => {
+        if (!cancel) setChainPays([]);
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [live, publicClient, receipts]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -273,6 +291,11 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
       return resolvePayee(typed)?.address ?? null;
     }
     return contact;
+  }
+
+  function onAuthorize(value = Number(fundAmt)) {
+    if (!live) return;
+    void liveSend("Authorize tUSD8", (pc, wc) => fundVaultWithAuthorization(pc, wc, wholeToBase(value)));
   }
 
   function onDeposit(value = Number(fundAmt)) {
@@ -1146,6 +1169,20 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
         {tab === "activity" ? (
           <div className="stage space-y-4">
             <h2 className="font-display text-xl font-medium tracking-display">Activity</h2>
+            {live && chainPays.length > 0 ? (
+              <ul className="plane p-4">
+                {chainPays.map((item) => (
+                  <li key={item.hash} className="border-b border-line py-3 last:border-b-0">
+                    <p className="text-sm text-ink">
+                      Paid {(Number(item.amount) / 10 ** tusd8Decimals).toLocaleString("en-US", { maximumFractionDigits: tusd8Decimals })} tUSD8 on Aevum
+                    </p>
+                    <a className="mt-1 block truncate font-mono text-xs text-seal" href={`${explorerUrl}/tx/${item.hash}`} target="_blank" rel="noreferrer">
+                      {item.hash}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
             {receipts.length > 0 ? (
               <ul className="plane p-4">
                 {receipts.map((item) => (
@@ -1227,9 +1264,14 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
                   Amount
                 </label>
                 <input id="fund" inputMode="numeric" className={field} value={fundAmt} onChange={(e) => setFundAmt(digits(e.target.value))} />
-                <button type="button" className={primary} disabled={!ready || busy} onClick={() => onDeposit()}>
+                <button type="button" className={primary} disabled={!ready || busy || !!liveHold} onClick={() => onDeposit()}>
                   Add money
                 </button>
+                {live ? (
+                  <button type="button" className={ghost} disabled={!ready || busy || !!liveHold} onClick={() => onAuthorize()}>
+                    Authorize
+                  </button>
+                ) : null}
                 <button type="button" className={ghost} disabled={!ready || busy} onClick={onWithdraw}>
                   Withdraw
                 </button>

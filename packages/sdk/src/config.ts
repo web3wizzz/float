@@ -19,6 +19,9 @@ export const tusd8Decimals = 6;
 
 export const tusd8 = "0x456569838f1d43009A91ebA4263147Afd7233483" as const;
 
+/** Block that created the live vault. eth_getLogs must start here and stay in 1,000-block slices. */
+export const vaultDeployBlock = 3478293n;
+
 /**
  * Live Aevum deployment from commit 62977c1, block 3478293.
  * EIP-55 checksums. `AgentVault.token()` is `tusd8`. `AgentVault.escrow()` is `escrow`.

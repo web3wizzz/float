@@ -6,6 +6,8 @@ Float is a tUSD8 vault for the Aevum Builder Challenge. The owner deposits the s
 
 Network: **Aevum testnet, chain id 44005**. Not QDay Origin (44003). Native gas is tQDAY, 18 decimals. RPC, explorer, faucet, the tUSD8 address, the token decimals, and the deployed contract addresses live in one file: `packages/sdk/src/config.ts`. tUSD8 `decimals()` on that network is **6**. Do not copy the token address into another file. The deploy script reads the address and the decimals from that file.
 
+Aevum is the Shanghai EVM. Contracts compile with `evm_version = "shanghai"` (no `MCOPY`, `TSTORE`, or blob opcodes). Live transactions are legacy, type 0. There is no WebSocket RPC. `eth_getLogs` is read in slices of at most 1,000 blocks, starting at the vault deploy block. tUSD8 accepts EIP-3009 `receiveWithAuthorization` (domain name `tUSD8`, version `2`). Live mode can fund the vault with that authorization. A payment that settles on any other chain does not count.
+
 The vault, escrow, router, and auth addresses in that file are the [live deployment](#deployed-on-aevum). Live mode refuses to invent a transaction while the vault address is empty.
 
 ## Architecture
@@ -57,14 +59,14 @@ Local deploy (Anvil's default chain id, not 44005 — that id selects the real t
 ```
 anvil
 cd contracts
-forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:8545 --broadcast
+forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:8545 --broadcast --legacy
 ```
 
 Aevum testnet. `aevum` is the RPC alias in `contracts/foundry.toml` (`https://rpc-test.qday.info`). Put `DEPLOYER_PRIVATE_KEY` in your shell, not in a file. The key must hold tQDAY. `OWNER_ADDRESS` is optional and defaults to the deployer.
 
 ```
 cd contracts
-forge script script/Deploy.s.sol --rpc-url aevum --broadcast --verify --verifier blockscout --verifier-url https://explorer-test.qday.info/api
+forge script script/Deploy.s.sol --rpc-url aevum --broadcast --legacy --verify --verifier blockscout --verifier-url https://explorer-test.qday.info/api
 ```
 
 That writes `contracts/deployments/latest.json`. The script reads the token address and decimals from `packages/sdk/src/config.ts`. On chain 44005 it uses that token, checks `decimals()`, and refuses to deploy `MockTUSD8`. On any other chain, if `TUSD8_ADDRESS` is unset, it deploys `MockTUSD8` (6 decimals, so `150e6` in the tests is 150 whole tokens). Record a new deployment by replacing the vault, escrow, router, and auth addresses in `packages/sdk/src/config.ts` only.

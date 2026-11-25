@@ -25,6 +25,39 @@ export const erc20Abi = [
   },
 ] as const;
 
+/** EIP-3009. Domain is name "tUSD8", version "2", verifyingContract this token. */
+export const eip3009Abi = [
+  {
+    type: "function",
+    name: "receiveWithAuthorization",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "from", type: "address" },
+      { name: "to", type: "address" },
+      { name: "value", type: "uint256" },
+      { name: "validAfter", type: "uint256" },
+      { name: "validBefore", type: "uint256" },
+      { name: "nonce", type: "bytes32" },
+      { name: "v", type: "uint8" },
+      { name: "r", type: "bytes32" },
+      { name: "s", type: "bytes32" },
+    ],
+    outputs: [],
+  },
+] as const;
+
+export const agentPaidEvent = {
+  type: "event",
+  name: "AgentPaid",
+  inputs: [
+    { name: "agent", type: "address", indexed: true },
+    { name: "payee", type: "address", indexed: true },
+    { name: "amount", type: "uint256", indexed: false },
+    { name: "memo", type: "bytes32", indexed: false },
+    { name: "caller", type: "address", indexed: true },
+  ],
+} as const;
+
 export const agentVaultAbi = [
   {
     type: "function",
