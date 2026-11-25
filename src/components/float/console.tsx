@@ -6,7 +6,7 @@ import { Link } from "@tanstack/react-router";
 import { createConfig, http, useAccount, useConnect, usePublicClient, useSwitchChain, useWalletClient, WagmiProvider } from "wagmi";
 import { injected } from "wagmi/connectors";
 import type { Address } from "viem";
-import { chainId, configured, contracts, explorerUrl, faucetUrl, aevumTestnet, isHexAddress, rpcUrl, tusd8, tusd8Decimals, vaultAddress } from "@/lib/float/config";
+import { chainId, configured, contracts, explorerUrl, faucetUrl, aevumTestnet, isHexAddress, rpcUrl, tusd8, tusd8Decimals } from "@/lib/float/config";
 import { DEFAULT_AGENT, DIRECTORY, YOUR_ACCOUNT, labelOf, resolvePayee, shortAddr } from "@/lib/float/directory";
 import {
   HOUR_MS,
