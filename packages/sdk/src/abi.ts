@@ -25,6 +25,39 @@ export const erc20Abi = [
   },
 ] as const;
 
+/** EIP-3009 transferWithAuthorization. Any caller may submit it. Domain is name "tUSD8", version "2". */
+export const eip3009Abi = [
+  {
+    type: "function",
+    name: "transferWithAuthorization",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "from", type: "address" },
+      { name: "to", type: "address" },
+      { name: "value", type: "uint256" },
+      { name: "validAfter", type: "uint256" },
+      { name: "validBefore", type: "uint256" },
+      { name: "nonce", type: "bytes32" },
+      { name: "v", type: "uint8" },
+      { name: "r", type: "bytes32" },
+      { name: "s", type: "bytes32" },
+    ],
+    outputs: [],
+  },
+] as const;
+
+export const agentPaidEvent = {
+  type: "event",
+  name: "AgentPaid",
+  inputs: [
+    { name: "agent", type: "address", indexed: true },
+    { name: "payee", type: "address", indexed: true },
+    { name: "amount", type: "uint256", indexed: false },
+    { name: "memo", type: "bytes32", indexed: false },
+    { name: "caller", type: "address", indexed: true },
+  ],
+} as const;
+
 export const agentVaultAbi = [
   {
     type: "function",
@@ -122,6 +155,17 @@ export const agentVaultAbi = [
   },
   {
     type: "function",
+    name: "payAsOwner",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "payee", type: "address" },
+      { name: "amount", type: "uint256" },
+      { name: "memo", type: "bytes32" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
     name: "fundInvoice",
     stateMutability: "nonpayable",
     inputs: [{ name: "invoiceId", type: "uint256" }],
@@ -153,6 +197,13 @@ export const agentVaultAbi = [
       { name: "amount", type: "uint256" },
       { name: "limit", type: "uint256" },
     ],
+  },
+  {
+    type: "function",
+    name: "availableBalance",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
   },
   {
     type: "error",

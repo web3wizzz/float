@@ -51,9 +51,9 @@ function amountOf(raw: string): number | null {
  */
 export function parseUtterance(text: string): { action?: AgentAction; error?: string } {
   const input = text.trim().replace(/\s+/g, " ");
-  if (!input) return { error: "Say what the agent should do." };
+  if (!input) return { error: "Say what you want to do." };
 
-  if (/^(balance|vault balance|how much is in the vault)\b/i.test(input)) {
+  if (/^(balance|vault balance|how much|what(?:'|’)s my balance)\b/i.test(input) || /\b(my balance|the balance)\b/i.test(input)) {
     return { action: actionSchema.parse({ type: "balance" }) };
   }
   if (/^pause\b/i.test(input)) return { action: actionSchema.parse({ type: "pause" }) };
@@ -91,22 +91,22 @@ export function parseUtterance(text: string): { action?: AgentAction; error?: st
     return { action: actionSchema.parse({ type: "pay", payee: payee.address, amount }) };
   }
 
-  return { error: "Could not read that. Try “pay Acme Studio 120 tUSD8 for invoice INV-0142”." };
+  return { error: "Could not read that. Try “send 5 tUSD8 to DataRelay” or “send 5 tUSD8 to DataRelay every week”." };
 }
 
 export function describeAction(action: AgentAction): string {
   switch (action.type) {
     case "pay":
-      return `Pay ${action.amount} tUSD8 to ${action.payee}${action.memo ? ` · ${action.memo}` : ""}. The vault still enforces limits.`;
+      return `Send ${action.amount} tUSD8 to ${action.payee}${action.memo ? ` · ${action.memo}` : ""}.`;
     case "schedule":
-      return `Schedule ${action.amount} tUSD8 to ${action.payee} every ${Math.round(action.everyMs / 3600000)}h, up to ${action.maxRuns} runs.`;
+      return `Send ${action.amount} tUSD8 to ${action.payee} every ${Math.round(action.everyMs / 3600000)}h, up to ${action.maxRuns} times.`;
     case "x402":
-      return "Buy the DataRelay oracle. The agent pays the 402 price only if policy allows it.";
+      return "Buy the DataRelay oracle with the agent’s mandate. The vault still enforces the limit.";
     case "pause":
-      return "Pause the active agent. In-flight schedules will fail the policy check until you resume.";
+      return "Pause the agent. Its spends stop until you resume it.";
     case "revoke":
-      return "Revoke the active agent. This is immediate.";
+      return "Revoke the agent. This is immediate.";
     case "balance":
-      return "Show vault balance, reserve, and what the agent has left today.";
+      return "Show your balance, what is reserved, and what each agent has left today.";
   }
 }

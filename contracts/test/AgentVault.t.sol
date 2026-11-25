@@ -68,6 +68,20 @@ contract AgentVaultTest is Test {
         vm.stopPrank();
     }
 
+    function test_payAsOwner_ignoresAgentPolicy() public {
+        address other = makeAddr("other");
+        vm.prank(owner);
+        vault.payAsOwner(other, 500e6, bytes32("you"));
+        assertEq(token.balanceOf(other), 500e6);
+        assertEq(vault.spentInWindow(agent), 0);
+    }
+
+    function test_pay_ownerIsNotAnAgent() public {
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(AgentVault.AgentNotActive.selector, owner));
+        vault.pay(payee, 1e6, bytes32(0));
+    }
+
     function test_pay_withinPolicy() public {
         vm.prank(agent);
         vault.pay(payee, 120e6, bytes32("INV-0142"));

@@ -95,6 +95,7 @@ contract AgentVault is EIP712, ReentrancyGuard, Ownable {
         address indexed agent, uint128 perTxLimit, uint128 dailyLimit, uint64 expiry, bool allowAnyPayee
     );
     event AgentPaid(address indexed agent, address indexed payee, uint256 amount, bytes32 memo, address indexed caller);
+    event OwnerPaid(address indexed payee, uint256 amount, bytes32 memo);
     event EscrowFunded(address indexed agent, uint256 indexed invoiceId, address payee, uint256 amount);
     event AuthUpdated(address indexed auth);
     event EscrowUpdated(address indexed escrow);
@@ -235,6 +236,17 @@ contract AgentVault is EIP712, ReentrancyGuard, Ownable {
 
     function pay(address payee, uint256 amount, bytes32 memo) external nonReentrant {
         _spend(msg.sender, payee, amount, memo, false);
+    }
+
+    /// @notice The owner spends their own float. Agent limits do not apply. Reserved funds stay locked.
+    function payAsOwner(address payee, uint256 amount, bytes32 memo) external onlyOwner nonReentrant {
+        if (globalPaused) revert GloballyPaused();
+        if (payee == address(0)) revert ZeroAddress();
+        if (amount == 0) revert ZeroAmount();
+        uint256 available = _available();
+        if (amount > available) revert InsufficientAvailable(available, amount);
+        token.safeTransfer(payee, amount);
+        emit OwnerPaid(payee, amount, memo);
     }
 
     function batchPay(address[] calldata payees, uint256[] calldata amounts, bytes32[] calldata memos)

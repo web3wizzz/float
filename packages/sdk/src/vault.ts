@@ -1,6 +1,9 @@
 import {
   BaseError,
   ContractFunctionRevertedError,
+  hexToSignature,
+  keccak256,
+  toHex,
   type Abi,
   type Account,
   type Address,
@@ -11,8 +14,9 @@ import {
   type WalletClient,
   stringToHex,
 } from "viem";
-import { agentVaultAbi, erc20Abi } from "./abi.ts";
-import { aevumTestnet, chainId, escrowAddress, tusd8, tusd8Decimals, vaultAddress } from "./config.ts";
+import { agentPaidEvent, agentVaultAbi, eip3009Abi, erc20Abi } from "./abi.ts";
+import { aevumTestnet, chainId, escrowAddress, tusd8, tusd8Decimals, vaultAddress, vaultDeployBlock } from "./config.ts";
+import { getLogsChunked } from "./logs.ts";
 
 export interface TxOk {
   ok: true;
@@ -81,6 +85,8 @@ async function simulateAndSend<const abi extends Abi, functionName extends Contr
       args: parameters.args,
       account: wallet.account,
       chain: parameters.chain,
+      // Aevum accepts legacy (type 0) transactions. Do not send EIP-1559.
+      type: "legacy",
     } as Parameters<WalletClient["writeContract"]>[0]);
     return { ok: true, hashes: [hash] };
   } catch (err) {
@@ -96,6 +102,86 @@ export function memoBytes(memo: string): `0x${string}` {
 export function wholeToBase(amount: number): bigint {
   if (!Number.isInteger(amount) || amount <= 0) throw new Error("Amount must be a positive whole number of tUSD8.");
   return BigInt(amount) * 10n ** BigInt(tusd8Decimals);
+}
+
+const transferWithAuthorizationTypes = {
+  TransferWithAuthorization: [
+    { name: "from", type: "address" },
+    { name: "to", type: "address" },
+    { name: "value", type: "uint256" },
+    { name: "validAfter", type: "uint256" },
+    { name: "validBefore", type: "uint256" },
+    { name: "nonce", type: "bytes32" },
+  ],
+} as const;
+
+/**
+ * Fund the vault with tUSD8 transferWithAuthorization.
+ * receiveWithAuthorization requires the caller to be the recipient, so the owner cannot send it to the vault.
+ * transferWithAuthorization lets the owner submit the authorization and name the vault as `to`.
+ */
+export async function fundVaultWithAuthorization(publicClient: PublicClient, wallet: WalletClient, amount: bigint): Promise<TxResult> {
+  const vault = requireVault();
+  if (typeof vault !== "string") return vault;
+  const account = accountOf(wallet);
+  if (!("address" in account)) return account;
+  const now = BigInt(Math.floor(Date.now() / 1000));
+  const nonce = keccak256(toHex(crypto.getRandomValues(new Uint8Array(32))));
+  const validBefore = now + 600n;
+  try {
+    const signature = await wallet.signTypedData({
+      account,
+      domain: { name: "tUSD8", version: "2", chainId, verifyingContract: tusd8 },
+      types: transferWithAuthorizationTypes,
+      primaryType: "TransferWithAuthorization",
+      message: { from: account.address, to: vault, value: amount, validAfter: 0n, validBefore, nonce },
+    });
+    const { v, r, s } = hexToSignature(signature);
+    return simulateAndSend(publicClient, { writeContract: wallet.writeContract.bind(wallet), account }, {
+      account,
+      address: tusd8,
+      abi: eip3009Abi,
+      functionName: "transferWithAuthorization",
+      args: [account.address, vault, amount, 0n, validBefore, nonce, Number(v), r, s],
+      chain: aevumTestnet,
+    });
+  } catch (err) {
+    return { ok: false, reason: revertReason(err) };
+  }
+}
+
+export interface ChainPayment {
+  hash: Hash;
+  agent: Address;
+  payee: Address;
+  amount: bigint;
+}
+
+/** Free tUSD8 in the vault, in base units. Reserved schedule funds are excluded. */
+export async function readVaultAvailable(client: PublicClient): Promise<bigint | null> {
+  const vault = vaultAddress();
+  if (!vault) return null;
+  return client.readContract({ address: vault, abi: agentVaultAbi, functionName: "availableBalance" });
+}
+
+/** AgentPaid events from the deploy block, in ranges of at most 1,000 blocks. */
+export async function readVaultPayments(client: PublicClient): Promise<ChainPayment[]> {
+  const vault = vaultAddress();
+  if (!vault) return [];
+  const logs = await getLogsChunked(client, {
+    address: vault,
+    event: agentPaidEvent,
+    fromBlock: vaultDeployBlock,
+  });
+  return logs.map((log) => {
+    const args = log.args as { agent?: Address; payee?: Address; amount?: bigint };
+    return {
+      hash: log.transactionHash ?? "0x",
+      agent: args.agent ?? "0x0000000000000000000000000000000000000000",
+      payee: args.payee ?? "0x0000000000000000000000000000000000000000",
+      amount: args.amount ?? 0n,
+    };
+  });
 }
 
 export async function depositToVault(publicClient: PublicClient, wallet: WalletClient, amount: bigint): Promise<TxResult> {
@@ -147,6 +233,7 @@ export async function registerOnVault(
   perTx: bigint,
   daily: bigint,
   allow: readonly Address[],
+  expirySeconds = 0n,
 ): Promise<TxResult> {
   const vault = requireVault();
   if (typeof vault !== "string") return vault;
@@ -158,7 +245,7 @@ export async function registerOnVault(
     address: vault,
     abi: agentVaultAbi,
     functionName: "registerAgent",
-    args: [agent, perTx, daily, 0n, false],
+    args: [agent, perTx, daily, expirySeconds, false],
     chain: aevumTestnet,
   });
   if (!registered.ok) return registered;
@@ -194,6 +281,28 @@ export async function payFromVault(
     address: vault,
     abi: agentVaultAbi,
     functionName: "pay",
+    args: [payee, amount, memoBytes(memo)],
+    chain: aevumTestnet,
+  });
+}
+
+/** Owner spend. Does not use an agent policy. The live vault must include `payAsOwner`. */
+export async function payAsOwnerOnVault(
+  publicClient: PublicClient,
+  wallet: WalletClient,
+  payee: Address,
+  amount: bigint,
+  memo: string,
+): Promise<TxResult> {
+  const vault = requireVault();
+  if (typeof vault !== "string") return vault;
+  const account = accountOf(wallet);
+  if (!("address" in account)) return account;
+  return simulateAndSend(publicClient, { writeContract: wallet.writeContract.bind(wallet), account }, {
+    account,
+    address: vault,
+    abi: agentVaultAbi,
+    functionName: "payAsOwner",
     args: [payee, amount, memoBytes(memo)],
     chain: aevumTestnet,
   });

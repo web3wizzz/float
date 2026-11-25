@@ -17,7 +17,7 @@ jobs:
         with:
           version: stable
       - name: Install forge-std and OpenZeppelin
-        run: forge install foundry-rs/forge-std OpenZeppelin/openzeppelin-contracts --no-commit
+        run: forge install foundry-rs/forge-std OpenZeppelin/openzeppelin-contracts@v5.4.0 --no-commit
       - name: Format
         run: forge fmt --check
       - name: Build

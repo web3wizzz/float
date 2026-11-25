@@ -14,6 +14,9 @@ export const DEFAULT_AGENT = {
   label: "payables-1",
 };
 
+/** Simulation account. Not a key. Live mode shows the connected wallet instead. */
+export const YOUR_ACCOUNT = "0xF10A7000000000000000000000000000000000F1";
+
 export function shortAddr(address: string): string {
   if (address.length < 12) return address;
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
