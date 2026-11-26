@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 @theme {
-  --font-display: "Bricolage Grotesque", "Instrument Sans", ui-sans-serif, sans-serif;
-  --font-sans: "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Cabinet Grotesk", "Satoshi", ui-sans-serif, sans-serif;
+  --font-sans: "Satoshi", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
   --color-paper: #ffffff;
   --color-ink: #111111;
@@ -460,6 +460,208 @@
   }
 }
 
+.intro {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  overflow: hidden;
+  background: var(--color-paper);
+  animation: intro-leave 360ms var(--ease-out-expo) 1840ms forwards;
+}
+
+.rise-bubble {
+  position: absolute;
+  bottom: -4rem;
+  border-radius: 999px;
+  animation: rise-up 2s var(--ease-out-expo) both;
+}
+
+.rise-a {
+  left: 12%;
+  width: 1.4rem;
+  height: 1.4rem;
+  background: var(--color-seal);
+  animation-duration: 1.7s;
+}
+
+.rise-b {
+  left: 28%;
+  width: 2.2rem;
+  height: 2.2rem;
+  background: var(--color-balance);
+  animation-delay: 120ms;
+  animation-duration: 1.9s;
+}
+
+.rise-c {
+  right: 18%;
+  width: 1.1rem;
+  height: 1.1rem;
+  background: color-mix(in srgb, var(--color-seal) 55%, var(--color-paper));
+  animation-delay: 80ms;
+  animation-duration: 1.55s;
+}
+
+.rise-d {
+  right: 34%;
+  width: 1.8rem;
+  height: 1.8rem;
+  background: color-mix(in srgb, var(--color-balance) 70%, white);
+  animation-delay: 220ms;
+  animation-duration: 2.05s;
+}
+
+.rise-e {
+  left: 62%;
+  width: 0.85rem;
+  height: 0.85rem;
+  background: var(--color-seal);
+  animation-delay: 300ms;
+  animation-duration: 1.6s;
+}
+
+.rise-lead {
+  position: absolute;
+  left: 50%;
+  bottom: 18%;
+  display: grid;
+  place-items: center;
+  animation: rise-lead 1.35s var(--ease-out-expo) both;
+}
+
+.rise-shell {
+  position: absolute;
+  width: 7.5rem;
+  height: 7.5rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-seal) 16%, var(--color-paper));
+  animation: shell-pop 640ms var(--ease-out-expo) 1180ms both;
+}
+
+@keyframes rise-up {
+  0% {
+    opacity: 0;
+    transform: translateY(0) scale(0.6);
+  }
+  15% {
+    opacity: 0.95;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-110vh) scale(1);
+  }
+}
+
+@keyframes rise-lead {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 28vh) scale(0.72);
+  }
+  18% {
+    opacity: 1;
+  }
+  70% {
+    transform: translate(-46%, -18vh) scale(1.04);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, -28vh) scale(1);
+  }
+}
+
+@keyframes shell-pop {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.65);
+  }
+}
+
+@keyframes intro-leave {
+  to {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
+.work-bubbles {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  height: 2.25rem;
+}
+
+.work-bubbles span {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 999px;
+  background: var(--color-seal);
+  animation: work-bubble 900ms var(--ease-out-expo) infinite;
+}
+
+.work-bubbles span:nth-child(2) {
+  background: var(--color-balance);
+  animation-delay: 140ms;
+}
+
+.work-bubbles span:nth-child(3) {
+  width: 0.5rem;
+  height: 0.5rem;
+  animation-delay: 280ms;
+}
+
+.send-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  overflow: hidden;
+  background: var(--color-paper);
+}
+
+.send-mark {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  text-align: center;
+}
+
+.send-shell {
+  animation: shell-pulse 1.4s var(--ease-out-expo) infinite;
+}
+
+.send-screen .rise-bubble {
+  animation-iteration-count: infinite;
+}
+
+@keyframes work-bubble {
+  0%,
+  100% {
+    transform: translateY(0) scale(0.7);
+    opacity: 0.45;
+  }
+  50% {
+    transform: translateY(-6px) scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes shell-pulse {
+  0%,
+  100% {
+    opacity: 0.85;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
+
 .feed-item {
   animation: feed-in 180ms var(--ease-out-expo);
 }
@@ -473,7 +675,14 @@
   .msg-in,
   .meter-fill,
   .lift,
-  .press {
+  .press,
+  .intro,
+  .rise-bubble,
+  .rise-lead,
+  .rise-shell,
+  .work-bubbles span,
+  .send-shell,
+  .send-screen .rise-bubble {
     animation: none;
     transition: none;
   }
