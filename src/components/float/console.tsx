@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { format } from "date-fns";
-import { Activity, ArrowUp, Bot, FileText, MessageSquare, Settings, Wallet, X } from "lucide-react";
+import { Activity, ArrowUp, ArrowUpRight, Bot, FileText, MessageSquare, Moon, Repeat, Settings, Sun, Wallet, X } from "lucide-react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { createConfig, http, useAccount, useConnect, usePublicClient, useSwitchChain, useWalletClient, WagmiProvider } from "wagmi";
 import { injected } from "wagmi/connectors";
 import type { Address } from "viem";
-import { chainId, configured, contracts, explorerUrl, faucetUrl, aevumTestnet, isHexAddress, rpcUrl, tusd8, tusd8Decimals } from "@/lib/float/config";
-import { DEFAULT_AGENT, DIRECTORY, YOUR_ACCOUNT, labelOf, resolvePayee, shortAddr } from "@/lib/float/directory";
+import { chainId, configured, explorerUrl, aevumTestnet, isHexAddress, rpcUrl, tusd8Decimals } from "@/lib/float/config";
+import { DEFAULT_AGENT, DIRECTORY, labelOf, resolvePayee, shortAddr } from "@/lib/float/directory";
+import { localAgent } from "@/lib/float/agent-key";
 import {
   HOUR_MS,
   DAY_MS,
@@ -43,12 +44,12 @@ import {
   createScheduleOnVault,
   depositToVault,
   executeScheduleOnVault,
-  fundVaultWithAuthorization,
   pauseAgentOnVault,
   pauseVaultOnVault,
   payAsOwnerOnVault,
   registerOnVault,
   revokeOnVault,
+  readAgentActive,
   readVaultAvailable,
   readVaultPayments,
   wholeToBase,
@@ -57,7 +58,6 @@ import {
 } from "../../../packages/sdk/src/vault.ts";
 
 type Tab = "chat" | "home" | "send" | "invoices" | "agents" | "activity";
-type Mode = "simulation" | "live";
 
 interface Receipt {
   id: number;
@@ -84,11 +84,12 @@ const wagmiConfig = createConfig({
 });
 
 const KEY = "float-ledger-v1";
-const WELCOME_KEY = "float-welcome-v2";
+const NAME_KEY = "float.user-name";
 const field =
   "field min-h-11 w-full rounded-lg bg-paper px-3 font-mono text-sm text-ink outline-none";
+const THEME_KEY = "float.theme";
 const primary =
-  "press min-h-11 rounded-lg bg-seal px-4 text-sm font-medium text-paper disabled:opacity-40";
+  "press min-h-12 rounded-xl bg-seal px-4 text-sm font-medium text-on-seal disabled:opacity-40";
 const ghost =
   "press min-h-11 rounded-lg bg-surface px-4 text-sm text-ink shadow-plane disabled:opacity-40";
 const dangerBtn =
@@ -123,10 +124,7 @@ function loadLedger(raw: string | null): Ledger {
 }
 
 function formatTusd(amount: number): string {
-  return amount.toLocaleString("en-US", {
-    minimumFractionDigits: tusd8Decimals,
-    maximumFractionDigits: tusd8Decimals,
-  });
+  return amount.toLocaleString("en-US", { maximumFractionDigits: 2 });
 }
 
 function whoOf(actor?: string): string {
@@ -141,7 +139,9 @@ function digits(value: string): string {
 export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
   const [ledger, setLedger] = useState<Ledger>(freshLedger);
   const [ready, setReady] = useState(false);
-  const [welcomeOn, setWelcomeOn] = useState<boolean | null>(null);
+  const [name, setName] = useState("");
+  const [named, setNamed] = useState<boolean | null>(null);
+  const [theme, setTheme] = useState<"light" | "dark">("light");
   const [now, setNow] = useState<number | null>(null);
   const [tab, setTab] = useState<Tab>("chat");
   const [fundAmt, setFundAmt] = useState("1000");
@@ -153,6 +153,8 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
   const [allow, setAllow] = useState<string[]>([DIRECTORY[0].address, DIRECTORY[1].address]);
   const [showAdd, setShowAdd] = useState(false);
   const [agentError, setAgentError] = useState<string | null>(null);
+  const [vaultAgents, setVaultAgents] = useState<Record<string, boolean>>({});
+  const [settled, setSettled] = useState(0);
   const [utterance, setUtterance] = useState("send 5 tUSD8 to DataRelay every week");
   const [pending, setPending] = useState<AgentAction | null>(null);
   const [thread, setThread] = useState<ThreadMsg[]>([]);
@@ -167,12 +169,10 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
   const [sendMode, setSendMode] = useState<"once" | "repeat">("once");
   const [review, setReview] = useState<{ payee: string; amount: number; memo: string; repeat: boolean } | null>(null);
   const [showRequest, setShowRequest] = useState(false);
-  const [draftId, setDraftId] = useState("INV-0300");
   const [draftPayee, setDraftPayee] = useState(DIRECTORY[0].address);
   const [draftAmt, setDraftAmt] = useState("40");
   const [draftMemo, setDraftMemo] = useState("");
   const [lastProof, setLastProof] = useState<string | null>(null);
-  const [mode, setMode] = useState<Mode>("simulation");
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [chainPays, setChainPays] = useState<Awaited<ReturnType<typeof readVaultPayments>>>([]);
   const [busy, setBusy] = useState(false);
@@ -182,14 +182,44 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
   const publicClient = usePublicClient({ chainId: aevumTestnet.id });
   const { data: walletClient } = useWalletClient({ chainId: aevumTestnet.id });
 
-  const live = mode === "live";
+  const live = true;
 
   useEffect(() => {
-    setLedger(loadLedger(localStorage.getItem(KEY)));
+    const saved = loadLedger(localStorage.getItem(KEY));
+    const revoked = saved.feed.some((item) => item.title.startsWith("Revoked "));
+    if (saved.agents.length === 0 && !revoked) {
+      const who = localAgent();
+      const result = registerAgent(
+        saved,
+        {
+          address: who.address,
+          label: DEFAULT_AGENT.label,
+          perTxLimit: 150,
+          dailyLimit: 400,
+          allow: [DIRECTORY[0].address, DIRECTORY[1].address],
+        },
+        Date.now(),
+      );
+      setLedger(result.ok ? result.ledger : saved);
+      setAgentAddr(who.address);
+    } else {
+      setLedger(saved);
+      if (saved.agents[0]) setAgentAddr(saved.agents[0].address);
+    }
     setNow(Date.now());
+    const stored = localStorage.getItem(NAME_KEY)?.trim() ?? "";
+    setName(stored);
+    setNamed(stored.length > 0);
+    const storedTheme = localStorage.getItem(THEME_KEY);
+    if (storedTheme === "dark" || storedTheme === "light") setTheme(storedTheme);
     setReady(true);
-    setWelcomeOn(localStorage.getItem(WELCOME_KEY) !== "1");
   }, []);
+
+  useEffect(() => {
+    if (!ready) return;
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem(THEME_KEY, theme);
+  }, [theme, ready]);
 
   useEffect(() => {
     if (!ready) return;
@@ -201,6 +231,29 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, [ready, live]);
+
+  useEffect(() => {
+    if (!live || !publicClient) {
+      setVaultAgents({});
+      return;
+    }
+    const addresses = ledger.agents.map((item) => item.address).filter(isHexAddress);
+    let cancel = false;
+    void Promise.all(
+      addresses.map(async (address) => {
+        try {
+          return [address.toLowerCase(), await readAgentActive(publicClient, address)] as const;
+        } catch {
+          return [address.toLowerCase(), false] as const;
+        }
+      }),
+    ).then((rows) => {
+      if (!cancel) setVaultAgents(Object.fromEntries(rows));
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [live, publicClient, ledger.agents, settled]);
 
   useEffect(() => {
     if (!live || !publicClient) return;
@@ -239,8 +292,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
   const clock = now == null ? null : now + ledger.offsetMs;
   const activeAgents = ledger.agents.filter((item) => item.active);
   const agent = activeAgents[0] ?? ledger.agents[0];
-  const account = live && wallet ? wallet : YOUR_ACCOUNT;
-  const spentToday = clock == null ? 0 : ledger.agents.reduce((sum, item) => sum + spentInWindow(item, clock), 0);
+  const account = wallet ?? "";
 
   function at(): number {
     return (now ?? Date.now()) + ledger.offsetMs;
@@ -283,6 +335,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
         if (hash) {
           await publicClient.waitForTransactionReceipt({ hash });
           setChainPays(await readVaultPayments(publicClient));
+          setSettled((count) => count + 1);
         }
       } else {
         record({ ok: false, title, detail: result.reason, hashes: [] });
@@ -306,11 +359,6 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
       return resolvePayee(typed)?.address ?? null;
     }
     return contact;
-  }
-
-  function onAuthorize(value = Number(fundAmt)) {
-    if (!live) return;
-    void liveSend("Authorize tUSD8", (pc, wc) => fundVaultWithAuthorization(pc, wc, wholeToBase(value)));
   }
 
   function onDeposit(value = Number(fundAmt)) {
@@ -478,8 +526,8 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
     if (action.type === "balance") {
       setNote(
         agent
-          ? `Your balance ${formatTusd(ledger.balance)} tUSD8. ${formatTusd(available(ledger))} free. ${agent.label} is one of your agents.`
-          : `Your balance ${formatTusd(ledger.balance)} tUSD8. No agent added.`,
+          ? `${name}, your balance is ${formatTusd(ledger.balance)} tUSD8. ${formatTusd(available(ledger))} is free. ${agent.label} is one of your agents.`
+          : `${name}, your balance is ${formatTusd(ledger.balance)} tUSD8. No agent added.`,
       );
       setTab("home");
       return;
@@ -561,7 +609,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
       run: () =>
         addMandate({
           label: DEFAULT_AGENT.label,
-          address: DEFAULT_AGENT.address,
+          address: agent?.address && isHexAddress(agent.address) ? agent.address : DEFAULT_AGENT.address,
           perTxLimit: 150,
           dailyLimit: 400,
           allow: [DIRECTORY[0].address, DIRECTORY[1].address],
@@ -614,7 +662,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
       setThread((prev) => [
         ...prev,
         { id: youId, role: "you", text: trimmed },
-        { id: youId + 1, role: "agent", text: parsed.error ?? "Say what you want the agent to do." },
+        { id: youId + 1, role: "agent", text: parsed.error ?? `${name}, say what you want the agent to do.` },
       ]);
       return;
     }
@@ -626,13 +674,13 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
           const line =
             free == null
               ? "No vault is available on Aevum yet."
-              : `Free on Aevum: ${(Number(free) / 10 ** tusd8Decimals).toLocaleString("en-US", { maximumFractionDigits: tusd8Decimals })} tUSD8. The sandbox balance is not this number.`;
+              : `${name}, free on Aevum is ${(Number(free) / 10 ** tusd8Decimals).toLocaleString("en-US", { maximumFractionDigits: tusd8Decimals })} tUSD8.`;
           setThread((prev) => [...prev, { id: youId, role: "you", text: trimmed }, { id: youId + 1, role: "agent", text: line }]);
         });
         setUtterance("");
         return;
       }
-      const line = `Your balance is ${formatTusd(ledger.balance)} tUSD8. ${formatTusd(available(ledger))} is free.${agent?.active ? ` ${agent.label} can spend inside its mandate.` : " No agent is active."}`;
+      const line = `${name}, your balance is ${formatTusd(ledger.balance)} tUSD8. ${formatTusd(available(ledger))} is free.${agent?.active ? ` ${agent.label} can spend inside its mandate.` : " No agent is active."}`;
       setThread((prev) => [
         ...prev,
         { id: youId, role: "you", text: trimmed },
@@ -644,7 +692,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
     setThread((prev) => [
       ...prev,
       { id: youId, role: "you", text: trimmed },
-      { id: youId + 1, role: "agent", text: "Review this. Nothing moves until you approve.", action: parsed.action },
+      { id: youId + 1, role: "agent", text: `Review this, ${name}. Nothing moves until you approve.`, action: parsed.action },
     ]);
   }
 
@@ -672,40 +720,42 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
 
   if (surface === "tour") {
     return (
-      <div className="min-h-screen bg-paper text-ink">
-        <header className="border-b border-line">
-          <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 py-3">
-            <Link to="/" className="flex items-center gap-3">
+      <div className="app-shell">
+        <div className="app-column">
+        <header className="app-header">
+          <div className="app-pad mx-auto flex max-w-3xl items-center justify-between gap-3 py-3">
+            <Link to="/" className="flex items-center" aria-label="Float">
               <Mark />
-              <span className="font-display text-lg font-medium tracking-display">Float</span>
             </Link>
             <Link to="/" className={`${ghost} inline-flex items-center`}>
               Home
             </Link>
           </div>
         </header>
-        <main className="mx-auto max-w-3xl px-4 py-5">
+        <main className="app-stage">
           <Tour human={humanSteps} agent={agentSteps} ready={ready} busy={busy} />
         </main>
+        </div>
       </div>
     );
   }
 
-  if (welcomeOn === null) return <div className="min-h-screen bg-paper" />;
-  if (welcomeOn) {
+  if (named === null || !ready) return <div className="min-h-screen bg-paper" />;
+  if (!named) {
     return (
       <Welcome
-        onContinue={() => {
-          localStorage.setItem(WELCOME_KEY, "1");
-          setWelcomeOn(false);
+        onContinue={(next) => {
+          localStorage.setItem(NAME_KEY, next);
+          setName(next);
+          setNamed(true);
         }}
       />
     );
   }
 
   return (
-    <div className="min-h-screen bg-paper text-ink lg:pl-56">
-      <aside className="fixed inset-y-0 left-0 z-20 hidden w-56 flex-col border-r border-line bg-paper lg:flex">
+    <div className="app-shell min-h-0">
+      <aside className="fixed inset-y-0 left-0 z-20 hidden w-60 flex-col border-r border-line bg-paper lg:flex">
         <nav className="flex flex-1 flex-col gap-1 px-3 pt-4" aria-label="Sections">
           {NAV.map((item) => (
             <button
@@ -721,25 +771,18 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
         </nav>
       </aside>
 
-      <header className="border-b border-line">
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 py-3">
-          <div className="flex min-w-0 items-center gap-3">
+      <div className="app-column lg:col-start-2">
+      <header className="app-header">
+        <div className="app-pad mx-auto flex max-w-6xl items-center justify-between gap-3 py-3">
+          <div className="flex min-w-0 items-center" aria-label="Float">
             <Mark />
-            <p className="font-display text-lg font-medium tracking-display">Float</p>
           </div>
           <div className="flex items-center gap-2">
-            <div className="hidden rounded-lg bg-paper p-1 shadow-plane lg:flex" role="group" aria-label="Ledger mode">
-              <button type="button" aria-pressed={!live} onClick={() => setMode("simulation")} className={`press min-h-11 rounded-md px-3 text-sm ${!live ? "bg-ink text-paper" : "text-muted"}`}>
-                Simulation
-              </button>
-              <button type="button" aria-pressed={live} onClick={() => setMode("live")} className={`press min-h-11 rounded-md px-3 text-sm ${live ? "bg-seal text-paper" : "text-muted"}`}>
-                Live (Aevum)
-              </button>
-            </div>
             <button
               type="button"
               className={isConnected && walletChain === chainId ? ghost : primary}
               disabled={isPending || (!isConnected && connectors.length === 0)}
+              aria-label={!isConnected ? "Connect wallet" : walletChain !== chainId ? "Switch network" : shortAddr(wallet ?? "Wallet")}
               onClick={() => {
                 if (!isConnected) {
                   const connector = connectors[0];
@@ -749,7 +792,8 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
                 if (walletChain !== chainId) void switchChainAsync({ chainId });
               }}
             >
-              {!isConnected ? "Connect wallet" : walletChain !== chainId ? "Switch network" : shortAddr(wallet ?? "")}
+              <Wallet className="size-4 sm:hidden" aria-hidden="true" />
+              <span className="hidden sm:inline">{!isConnected ? "Connect wallet" : walletChain !== chainId ? "Switch network" : shortAddr(wallet ?? "")}</span>
             </button>
             <button type="button" className={iconBtn} aria-label="Settings" onClick={() => setSettingsOpen(true)}>
               <Settings className="size-4" aria-hidden="true" />
@@ -764,7 +808,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
         </div>
       ) : null}
 
-      <main className={`mx-auto w-full max-w-3xl px-4 ${tab === "chat" ? "thread-frame flex flex-col pt-2" : "py-5 pb-24 lg:pb-10"}`}>
+      <main className={`app-stage ${tab === "chat" ? "app-stage-chat" : ""}`}>
         {tab === "chat" ? (
           <div className="flex min-h-0 flex-1 flex-col">
             <div className="flex items-baseline justify-between gap-3 py-2">
@@ -777,7 +821,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
               {thread.length === 0 ? (
                 <div className="flex flex-1 flex-col items-center justify-center px-2 text-center">
                   <Mark />
-                  <h1 className="mt-4 font-display text-2xl font-medium tracking-display">What should your agent pay?</h1>
+                  <h1 className="mt-4 font-display text-2xl font-medium tracking-display">{name}, what should your agent pay?</h1>
                   <p className="mt-2 max-w-sm text-sm text-muted">It shows a review card. Nothing moves until you approve.</p>
                   <div className="mt-6 flex flex-wrap justify-center gap-2">
                     {["What’s my balance?", "Send 5 tUSD8 to DataRelay", "Buy the DataRelay oracle"].map((prompt) => (
@@ -796,12 +840,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
                       <div className={msg.role === "you" ? "max-w-[85%]" : "max-w-[85%]"}>
                         {msg.role === "agent" ? (
                           <div className="mb-1 flex items-center gap-2 text-xs text-muted">
-                            <span className="grid size-5 place-items-center rounded-md bg-seal text-paper" aria-hidden="true">
-                              <svg viewBox="40 36 176 176" className="size-3" fill="currentColor">
-                                <path d="M40 36 H152 V84 H88 V116 H216 V164 H88 V212 H40 Z" />
-                              </svg>
-                            </span>
-                            Float
+                            <Mark size="sm" />
                           </div>
                         ) : null}
                         <div className={msg.role === "you" ? "bubble-you px-4 py-3 text-sm" : "text-sm text-ink"}>
@@ -869,24 +908,25 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
         {tab === "home" ? (
           <div className="stage space-y-5">
             <Cheque balance={ledger.balance} free={available(ledger)} reserved={ledger.reserved} account={account} />
-            <div className="grid grid-cols-2 gap-3">
-              <Quick index="01" label="Send" hint="Send money" onClick={() => { setSendMode("once"); setReview(null); setTab("send"); }} />
-              <Quick index="02" label="Request" hint="New invoice" onClick={() => { setShowRequest(true); setTab("invoices"); }} />
-              <Quick index="03" label="Invoice" hint="Pay or release" onClick={() => setTab("invoices")} />
-              <Quick index="04" label="Schedule" hint="Repeat a send" onClick={() => { setSendMode("repeat"); setReview(null); setTab("send"); }} />
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <Quick icon={ArrowUpRight} label="Send" hint="Move tUSD8" primary onClick={() => { setSendMode("once"); setReview(null); setTab("send"); }} />
+              <Quick icon={FileText} label="Request" hint="New invoice" onClick={() => { setShowRequest(true); setTab("invoices"); }} />
+              <Quick icon={Wallet} label="Invoice" hint="Pay or release" onClick={() => setTab("invoices")} />
+              <Quick icon={Repeat} label="Schedule" hint="Repeat a send" onClick={() => { setSendMode("repeat"); setReview(null); setTab("send"); }} />
             </div>
-            {ledger.agents.length > 0 ? (
-              <section className="plane flex items-center justify-between gap-4 px-4 py-4">
-                <div>
-                  <h2 className="kicker">Agents</h2>
-                  <p className="mt-1 text-sm text-ink">
-                    {activeAgents.length} active · {formatTusd(spentToday)} tUSD8 spent by agents today
-                  </p>
-                </div>
-                <button type="button" className="press shrink-0 text-sm font-medium text-seal" onClick={() => setTab("agents")}>
-                  Manage
-                </button>
-              </section>
+            {ledger.agents.length > 0 && agent ? (
+              <button type="button" className="plane flex w-full items-center gap-3 p-2 text-left" onClick={() => setTab("agents")}>
+                <span className="grid size-11 shrink-0 place-items-center rounded-lg bg-surface-2 text-ink">
+                  <Bot className="size-4" aria-hidden="true" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block font-display text-base font-medium tracking-display">{agent.label}</span>
+                  <span className="block text-xs text-muted">
+                    {formatTusd(Math.max(0, agent.dailyLimit - (clock == null ? 0 : spentInWindow(agent, clock))))} left today · {agent.perTxLimit} per payment
+                  </span>
+                </span>
+                <span className="pr-2 text-sm font-medium text-seal">Manage</span>
+              </button>
             ) : null}
             <section>
               <h2 className="font-display text-base font-medium tracking-display">Recent activity</h2>
@@ -952,7 +992,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
             }}
             onCancel={(id) => {
               if (live) {
-                record({ ok: false, title: "Cancel", detail: "This list is the sandbox. An Aevum schedule keeps running until it is cancelled on chain.", hashes: [] });
+                record({ ok: false, title: "Cancel", detail: "Cancel it on Aevum.", hashes: [] });
                 return;
               }
               apply(cancelSchedule(ledger, id, at()));
@@ -975,44 +1015,48 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
               ) : null}
             </div>
             {showRequest ? (
-              <section className="plane p-4">
-                <h3 className="text-sm font-medium">New invoice</h3>
-                <p className="mt-1 text-sm text-muted">You are paying this. It stays open until you fund escrow.</p>
-                <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                  <label className="text-xs text-muted">
-                    Invoice
-                    <input className={`${field} mt-1`} value={draftId} onChange={(e) => setDraftId(e.target.value)} />
-                  </label>
-                  <label className="text-xs text-muted">
-                    Amount
-                    <input className={`${field} mt-1`} inputMode="numeric" value={draftAmt} onChange={(e) => setDraftAmt(digits(e.target.value))} />
-                  </label>
-                  <label className="text-xs text-muted sm:col-span-2">
-                    Payee
-                    <select className={`${field} mt-1`} value={draftPayee} onChange={(e) => setDraftPayee(e.target.value)}>
-                      {DIRECTORY.map((item) => (
-                        <option key={item.address} value={item.address}>
-                          {item.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="text-xs text-muted sm:col-span-2">
-                    What it’s for
-                    <input className={`${field} mt-1`} value={draftMemo} onChange={(e) => setDraftMemo(e.target.value)} />
-                  </label>
-                </div>
-                <button type="button" className={`${primary} mt-3`} disabled={!!liveHold} title={liveHold ?? undefined} onClick={() => {
+              <section className="plane space-y-3 p-4">
+                <label className="block text-sm">
+                  Who
+                  <select className={`${field} mt-1`} value={draftPayee} onChange={(e) => setDraftPayee(e.target.value)}>
+                    {DIRECTORY.map((item) => (
+                      <option key={item.address} value={item.address}>
+                        {item.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block text-sm">
+                  Amount
+                  <input className={`${field} mt-1`} inputMode="numeric" value={draftAmt} onChange={(e) => setDraftAmt(digits(e.target.value))} />
+                </label>
+                <label className="block text-sm">
+                  For
+                  <input className={`${field} mt-1`} value={draftMemo} onChange={(e) => setDraftMemo(e.target.value)} />
+                </label>
+                <button
+                  type="button"
+                  className={primary}
+                  disabled={!!liveHold || !draftAmt}
+                  title={liveHold ?? undefined}
+                  onClick={() => {
                     if (live) {
-                      setNote("On Aevum the payee opens the invoice. A draft here is not an on-chain id.");
+                      setNote("The payee opens this on Aevum.");
                       return;
                     }
-                    apply(openInvoice(ledger, { id: draftId, payee: draftPayee, amount: Number(draftAmt), metadata: draftMemo || `${labelOf(draftPayee)} invoice` }, at()));
+                    apply(
+                      openInvoice(
+                        ledger,
+                        { id: `BILL-${Date.now().toString(36).toUpperCase()}`, payee: draftPayee, amount: Number(draftAmt), metadata: draftMemo.trim() || labelOf(draftPayee) },
+                        at(),
+                      ),
+                    );
+                    setDraftMemo("");
                     setShowRequest(false);
-                  }}>
-                  Create invoice
+                  }}
+                >
+                  Request
                 </button>
-                {liveHold ? <p className="mt-2 text-xs text-muted">{liveHold}</p> : null}
               </section>
             ) : null}
             {ledger.invoices.length === 0 && !showRequest ? (
@@ -1025,59 +1069,66 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
               </div>
             ) : (
             <ul className="space-y-3">
-              {ledger.invoices.map((inv) => (
+              {ledger.invoices.map((inv) => {
+                const done = inv.status === "released" || inv.status === "refunded";
+                const outcome = inv.status === "released" ? "Paid" : inv.status === "refunded" ? "Returned" : null;
+                return (
                 <li key={inv.id} className="plane p-4">
-                  <div className="flex items-baseline justify-between gap-3">
-                    <p className="font-mono text-sm">{inv.id}</p>
-                    <p className={`font-mono text-xs ${inv.status === "released" ? "text-treasury" : inv.status === "disputed" || inv.status === "refunded" ? "text-stamp" : "text-muted"}`}>
-                      {inv.status}
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <p className="font-display text-lg font-medium tracking-display">{labelOf(inv.payee)}</p>
+                      <p className="truncate text-sm text-muted">{inv.metadata}</p>
+                      {outcome ? <p className="mt-1 text-sm text-ink">{outcome}</p> : null}
+                    </div>
+                    <p className={`flex items-center gap-2 font-display text-2xl font-medium tracking-display ${done ? "text-muted" : "text-ink"}`}>
+                      <TokenIcon />
+                      {formatTusd(inv.amount)}
                     </p>
                   </div>
-                  <p className="mt-1 text-sm">{inv.metadata}</p>
-                  <p className="font-mono text-xs text-muted">
-                    {formatTusd(inv.amount)} tUSD8 · {labelOf(inv.payee)} · due {format(inv.due, "MMM d")}
-                  </p>
-                  <div className="mt-3 flex flex-wrap gap-2">
+                  {done ? null : (
+                  <div className="mt-4 flex flex-wrap gap-2">
                     {inv.status === "open" ? (
-                      <div>
-                        <button type="button" className={primary} disabled={!!liveHold || busy} title={liveHold ?? undefined} onClick={() => onPayInvoice(inv.id)}>
-                          Pay into escrow
-                        </button>
-                        {liveHold ? <p className="mt-2 text-xs text-muted">{liveHold}</p> : null}
-                      </div>
-                    ) : null}
-                    {inv.status === "funded" ? (
-                      <button type="button" className={primary} onClick={() => apply(markDelivered(ledger, inv.id, at()))}>
-                        Payee: mark delivered
-                      </button>
-                    ) : null}
-                    {inv.status === "delivered" ? (
-                      <button type="button" className={primary} onClick={() => apply(confirmInvoice(ledger, inv.id, at()))}>
-                        Release to payee
+                      <button type="button" className={primary} disabled={!!liveHold || busy} title={liveHold ?? undefined} onClick={() => onPayInvoice(inv.id)}>
+                        Pay
                       </button>
                     ) : null}
                     {inv.status === "funded" || inv.status === "delivered" ? (
-                      <button type="button" className={ghost} onClick={() => apply(disputeInvoice(ledger, inv.id, at()))}>
-                        Dispute
+                      <button
+                        type="button"
+                        className={primary}
+                        disabled={busy}
+                        onClick={() => {
+                          const marked = inv.status === "funded" ? markDelivered(ledger, inv.id, at()) : { ok: true as const, ledger };
+                          if (!marked.ok) {
+                            apply(marked);
+                            return;
+                          }
+                          apply(confirmInvoice(marked.ledger, inv.id, at()));
+                        }}
+                      >
+                        Release
                       </button>
                     ) : null}
+                    {inv.status === "funded" || inv.status === "delivered" ? (
+                      <button type="button" className={ghost} disabled={busy} onClick={() => apply(disputeInvoice(ledger, inv.id, at()))}>
+                        Problem
+                      </button>
+                    ) : null}
+                    {inv.status === "disputed" ? (
+                      <>
+                        <button type="button" className={primary} disabled={busy} onClick={() => apply(resolveInvoice(ledger, inv.id, true, at()))}>
+                          Pay them
+                        </button>
+                        <button type="button" className={ghost} disabled={busy} onClick={() => apply(resolveInvoice(ledger, inv.id, false, at()))}>
+                          Refund
+                        </button>
+                      </>
+                    ) : null}
                   </div>
-                  {inv.status === "disputed" ? (
-                    <div className="row mt-3 p-3">
-                      <p className="text-xs uppercase tracking-wide text-stamp">Arbiter</p>
-                      <p className="mt-1 text-sm text-muted">Only a disputed invoice asks an arbiter. This is not a mode you stay in.</p>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        <button type="button" className={primary} onClick={() => apply(resolveInvoice(ledger, inv.id, true, at()))}>
-                          Pay the payee
-                        </button>
-                        <button type="button" className={ghost} onClick={() => apply(resolveInvoice(ledger, inv.id, false, at()))}>
-                          Refund you
-                        </button>
-                      </div>
-                    </div>
-                  ) : null}
+                  )}
                 </li>
-              ))}
+                );
+              })}
             </ul>
             )}
           </div>
@@ -1088,7 +1139,6 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h2 className="font-display text-xl font-medium tracking-display">Agents</h2>
-                <p className="text-sm text-muted">Give an agent a spending limit. It never holds your keys.</p>
               </div>
               {ledger.agents.length > 0 ? (
                 <div className="text-right">
@@ -1134,7 +1184,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
                         type="button"
                         aria-pressed={on}
                         onClick={() => setAllow(on ? allow.filter((entry) => entry !== item.address) : [...allow, item.address])}
-                        className={`min-h-11 rounded-lg border px-3 text-sm ${on ? "border-seal bg-seal text-paper" : "border-line text-ink"}`}
+                        className={`min-h-11 rounded-lg border px-3 text-sm ${on ? "border-seal bg-seal text-on-seal" : "border-line text-ink"}`}
                       >
                         {item.label}
                       </button>
@@ -1159,9 +1209,12 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
             ) : ledger.agents.length === 0 ? null : (
               ledger.agents.map((item) => {
                 const spent = clock == null ? 0 : spentInWindow(item, clock);
+                const key = item.address.toLowerCase();
+                const known = key in vaultAgents;
+                const approved = vaultAgents[key] === true;
                 return (
-                  <article key={item.address} className="plane p-4">
-                    <div className="flex items-start justify-between gap-3">
+                  <article key={item.address} className="plane space-y-3 p-2">
+                    <div className="flex items-start justify-between gap-3 px-3 pt-3">
                       <div>
                         <h3 className="font-display text-base font-medium">{item.label}</h3>
                         <p className="font-mono text-xs text-muted">{shortAddr(item.address)}</p>
@@ -1170,31 +1223,50 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
                         {!item.active ? "revoked" : item.paused ? "paused" : "active"}
                       </span>
                     </div>
-                    <div className="mt-4">
+                    <div className="px-3">
                       <Drain left={Math.max(0, item.dailyLimit - spent)} cap={item.dailyLimit} />
                     </div>
-                    <p className="mt-3 text-xs text-muted">
+                    <p className="px-3 text-xs text-muted">
                       {item.perTxLimit} per payment · allowlist {item.allowAny ? "any payee" : item.allow.map((entry) => labelOf(entry)).join(", ") || "none"}
                       {item.expiry ? ` · expires ${format(item.expiry, "MMM d")}` : ""}
                     </p>
+                    {live && known ? (
+                      <p className="mt-2 text-xs text-muted">
+                        {approved ? "Approved on Aevum." : "Not on Aevum until you approve this address."}
+                      </p>
+                    ) : null}
+                    {live && known && !approved ? (
+                      <button
+                        type="button"
+                        className={`${primary} mt-3`}
+                        disabled={busy || !!liveHold}
+                        title={liveHold ?? undefined}
+                        onClick={() =>
+                          addMandate({
+                            label: item.label,
+                            address: item.address,
+                            perTxLimit: item.perTxLimit,
+                            dailyLimit: item.dailyLimit,
+                            allow: item.allow,
+                            expiry: item.expiry,
+                          })
+                        }
+                      >
+                        Approve on Aevum
+                      </button>
+                    ) : null}
                     {item.label === DEFAULT_AGENT.label && item.active ? (
-                      <div className="row mt-3 p-3">
+                      <div className="row rounded-lg p-3">
                         <p className="text-sm">DataRelay oracle</p>
-                        <p className="text-xs text-muted">The agent pays 25 tUSD8 if the mandate allows it. A reused proof is refused.</p>
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          <button type="button" className={primary} disabled={busy || !!liveHold} title={liveHold ?? undefined} onClick={onBuy}>
-                            Buy oracle
-                          </button>
-                          <button type="button" className={ghost} disabled={busy || (!lastProof && ledger.usedProofs.length === 0)} onClick={onReplay}>
-                            Replay proof
-                          </button>
-                        </div>
+                        <button type="button" className={primary} disabled={busy || !!liveHold} title={liveHold ?? undefined} onClick={onBuy}>
+                          Buy oracle
+                        </button>
                         {ledger.x402[0].purchases[0] ? (
                           <p className="mt-2 font-mono text-xs text-treasury">{ledger.x402[0].purchases[0].body}</p>
                         ) : null}
                       </div>
                     ) : null}
-                    <div className="mt-3 flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-2 px-3 pb-2">
                       <button
                         type="button"
                         className={ghost}
@@ -1270,131 +1342,118 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
         ) : null}
       </main>
 
-      <nav className="dock fixed inset-x-0 bottom-0 z-20 border-t border-line bg-paper lg:hidden" aria-label="Sections">
+      <nav className="app-dock lg:hidden" aria-label="Sections">
         <ul className="grid grid-cols-5">
           {NAV.map((item) => (
             <li key={item.id}>
               <button
                 type="button"
                 onClick={() => setTab(item.id)}
-                className={`flex min-h-14 w-full flex-col items-center justify-center gap-0.5 text-xs ${tab === item.id ? "dock-on" : "text-muted"}`}
+                aria-label={item.label}
+                className={`flex min-h-14 w-full items-center justify-center ${tab === item.id ? "dock-on" : "text-muted"}`}
               >
-                <item.icon className="size-4" aria-hidden="true" />
-                {item.label}
+                <item.icon className="size-5" aria-hidden="true" />
               </button>
             </li>
           ))}
         </ul>
       </nav>
 
-      {settingsOpen ? (
-        <div className="veil fixed inset-0 z-30 flex justify-end bg-ink/40" role="presentation" onClick={() => setSettingsOpen(false)}>
+      <div
+        className={`veil fixed inset-0 z-30 flex justify-end bg-ink/40 ${settingsOpen ? "veil-open" : ""}`}
+          role="presentation"
+          inert={settingsOpen ? undefined : true}
+          onClick={() => setSettingsOpen(false)}
+        >
           <div
             role="dialog"
             aria-label="Settings"
-            className="drawer-in h-full w-full max-w-md overflow-y-auto border-l border-line bg-paper p-5"
+            aria-hidden={settingsOpen ? undefined : true}
+            className={`drawer h-full w-full max-w-md overflow-y-auto border-l border-line bg-paper p-5 ${settingsOpen ? "drawer-open" : ""}`}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between gap-3">
               <h2 className="font-display text-lg font-medium tracking-display">Settings</h2>
-              <button type="button" className={ghost} aria-label="Close settings" onClick={() => setSettingsOpen(false)}>
+              <button type="button" className={iconBtn} aria-label="Close settings" onClick={() => setSettingsOpen(false)}>
                 <X className="size-4" aria-hidden="true" />
               </button>
             </div>
-            <p className="mt-1 font-mono text-xs text-muted">{clock == null ? "—" : format(clock, "MMM d · HH:mm")}</p>
-            <section className="mt-5 lg:hidden">
-              <h3 className="text-sm font-medium">Mode</h3>
-              <div className="mt-2 flex rounded-lg bg-paper p-1 shadow-plane" role="group" aria-label="Ledger mode">
-                <button type="button" aria-pressed={!live} onClick={() => setMode("simulation")} className={`press min-h-11 flex-1 rounded-md text-sm ${!live ? "bg-ink text-paper" : "text-muted"}`}>
-                  Simulation
-                </button>
-                <button type="button" aria-pressed={live} onClick={() => setMode("live")} className={`press min-h-11 flex-1 rounded-md text-sm ${live ? "bg-seal text-paper" : "text-muted"}`}>
-                  Live (Aevum)
-                </button>
-              </div>
-            </section>
-            <section className="mt-4">
-              <h3 className="text-sm font-medium">Your balance</h3>
-              <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-                <label className="sr-only" htmlFor="fund">
-                  Amount
-                </label>
-                <input id="fund" inputMode="numeric" className={field} value={fundAmt} onChange={(e) => setFundAmt(digits(e.target.value))} />
-                <button type="button" className={primary} disabled={!ready || busy || !!liveHold} onClick={() => onDeposit()}>
-                  Add money
-                </button>
-                {live ? (
-                  <button type="button" className={ghost} disabled={!ready || busy || !!liveHold} onClick={() => onAuthorize()}>
-                    Authorize
-                  </button>
-                ) : null}
-                <button type="button" className={ghost} disabled={!ready || busy} onClick={onWithdraw}>
-                  Withdraw
-                </button>
-              </div>
-            </section>
-            <section className="mt-5">
-              <h3 className="text-sm font-medium">Aevum</h3>
-              <p className="mt-1 text-sm text-muted">
-                {configured ? "Live payments use your vault on Aevum." : "No vault is available on Aevum yet. Live payments stay off."}
-              </p>
-              <dl className="mt-3 space-y-2 font-mono text-xs">
-                <ConfigRow k="Chain" v={String(chainId)} />
-                <ConfigRow k="Network" v={rpcUrl} />
-                <ConfigRow k="Explorer" v={explorerUrl} />
-                <ConfigRow k="Faucet" v={faucetUrl} />
-                <ConfigRow k="tUSD8" v={tusd8} />
-                <ConfigRow k="Decimals" v={String(tusd8Decimals)} />
-                <ConfigRow k="Vault" v={contracts.vault || "Not set"} />
-                <ConfigRow k="Wallet" v={isConnected ? `${shortAddr(wallet ?? "")}${walletChain != null ? ` · ${walletChain}` : ""}` : "Not connected"} />
-              </dl>
-            </section>
-            <div className="mt-5 flex flex-wrap gap-2">
-              <Link to="/tour" className={`${ghost} inline-flex items-center`}>
-                Open guided tour
-              </Link>
+            <div className="mt-6 flex gap-2" role="group" aria-label="Appearance">
               <button
                 type="button"
-                className={dangerBtn}
-                disabled={busy || !!liveHold}
-                title={liveHold ?? undefined}
-                onClick={() => {
-                  if (live) {
-                    void liveSend(ledger.globalPaused ? "Resume vault" : "Pause vault", (pc, wc) => pauseVaultOnVault(pc, wc, !ledger.globalPaused));
-                    return;
-                  }
-                  apply(setGlobalPaused(ledger, !ledger.globalPaused, at()));
-                }}
+                aria-label="White"
+                aria-pressed={theme === "light"}
+                onClick={() => setTheme("light")}
+                className={`${iconBtn} ${theme === "light" ? "bg-ink text-paper" : ""}`}
               >
-                {ledger.globalPaused ? "Resume vault" : "Pause vault"}
+                <Sun className="size-4" aria-hidden="true" />
               </button>
               <button
                 type="button"
-                className={ghost}
-                onClick={() => {
-                  localStorage.removeItem(KEY);
-                  setLedger(freshLedger());
-                  setPending(null);
-                  setLastProof(null);
-                  setReview(null);
-                  setNote("Cleared on this device.");
-                }}
+                aria-label="Dark"
+                aria-pressed={theme === "dark"}
+                onClick={() => setTheme("dark")}
+                className={`${iconBtn} ${theme === "dark" ? "bg-ink text-paper" : ""}`}
               >
-                Clear this device
+                <Moon className="size-4" aria-hidden="true" />
               </button>
             </div>
+            <label className="mt-6 block text-sm">
+              Name
+              <input
+                className={`${field} mt-2`}
+                value={name}
+                maxLength={24}
+                onChange={(event) => setName(event.target.value.slice(0, 24))}
+                onBlur={() => {
+                  const trimmed = name.trim().slice(0, 24);
+                  if (!trimmed) {
+                    setName(localStorage.getItem(NAME_KEY) ?? "");
+                    return;
+                  }
+                  localStorage.setItem(NAME_KEY, trimmed);
+                  setName(trimmed);
+                }}
+              />
+            </label>
+            <div className="mt-6 flex flex-col gap-2">
+              <label className="sr-only" htmlFor="fund">
+                Amount
+              </label>
+              <input id="fund" inputMode="numeric" className={field} value={fundAmt} onChange={(e) => setFundAmt(digits(e.target.value))} />
+              <button type="button" className={primary} disabled={!ready || busy || !!liveHold} onClick={() => onDeposit()}>
+                Add money
+              </button>
+              <button type="button" className={ghost} disabled={!ready || busy || !!liveHold} onClick={onWithdraw}>
+                Withdraw
+              </button>
+            </div>
+            <button
+              type="button"
+              className={`${dangerBtn} mt-6`}
+              disabled={busy || !!liveHold}
+              title={liveHold ?? undefined}
+              onClick={() => {
+                void liveSend(ledger.globalPaused ? "Resume vault" : "Pause vault", (pc, wc) => pauseVaultOnVault(pc, wc, !ledger.globalPaused));
+              }}
+            >
+              {ledger.globalPaused ? "Resume vault" : "Pause vault"}
+            </button>
             {liveHold ? <p className="mt-2 text-xs text-muted">{liveHold}</p> : null}
           </div>
         </div>
-      ) : null}
+      </div>
     </div>
   );
 }
 
-function Mark() {
+function Mark({ tone = "seal", size = "md" }: { tone?: "seal" | "paper"; size?: "sm" | "md" }) {
   return (
-    <span className="grid size-8 shrink-0 place-items-center rounded-md bg-seal text-paper" aria-hidden="true">
-      <svg viewBox="40 36 176 176" className="size-5" fill="currentColor">
+    <span
+      className={`grid shrink-0 place-items-center rounded-md ${size === "sm" ? "size-5" : "size-8"} ${tone === "paper" ? "bg-paper text-ink" : "bg-seal text-on-seal"}`}
+      aria-hidden="true"
+    >
+      <svg viewBox="40 36 176 176" className={size === "sm" ? "size-3" : "size-5"} fill="currentColor">
         <path d="M40 36 H152 V84 H88 V116 H216 V164 H88 V212 H40 Z" />
       </svg>
     </span>
@@ -1407,7 +1466,7 @@ function Figures({ value }: { value: string }) {
   return (
     <p className="figures font-display" aria-label={value}>
       {chars.map((ch, index) => (
-        <span key={`${total - index}-${ch}`} className={ch >= "0" && ch <= "9" ? "digit" : undefined} aria-hidden="true">
+        <span key={`${total - index}-${ch}`} aria-hidden="true">
           {ch}
         </span>
       ))}
@@ -1415,56 +1474,86 @@ function Figures({ value }: { value: string }) {
   );
 }
 
-function Quick({ index, label, hint, onClick }: { index: string; label: string; hint: string; onClick: () => void }) {
+function Quick({
+  icon: Icon,
+  label,
+  hint,
+  onClick,
+  primary,
+}: {
+  icon: typeof ArrowUpRight;
+  label: string;
+  hint: string;
+  onClick: () => void;
+  primary?: boolean;
+}) {
   return (
-    <button type="button" onClick={onClick} className="lift plane min-h-14 px-3 py-3 text-left">
-      <span className="kicker">{index}</span>
-      <span className="mt-2 block font-display text-base font-medium tracking-display text-ink">{label}</span>
-      <span className="block text-xs text-muted">{hint}</span>
+    <button
+      type="button"
+      onClick={onClick}
+      className={`lift flex min-h-14 items-center gap-3 px-3 py-3 text-left ${primary ? "rounded-2xl bg-seal text-on-seal shadow-float" : "plane"}`}
+    >
+      <span className={`grid size-10 shrink-0 place-items-center rounded-lg ${primary ? "bg-on-seal/15 text-on-seal" : "bg-surface-2 text-ink"}`}>
+        <Icon className="size-4" aria-hidden="true" />
+      </span>
+      <span>
+        <span className={`block font-display text-base font-medium tracking-display ${primary ? "text-on-seal" : "text-ink"}`}>{label}</span>
+        <span className={`block text-xs ${primary ? "text-on-seal/75" : "text-muted"}`}>{hint}</span>
+      </span>
     </button>
   );
 }
 
 function Cheque({ balance, free, reserved, account }: { balance: number; free: number; reserved: number; account: string }) {
   return (
-    <article className="cheque px-5 pt-5 pb-8">
-      <Guilloche />
+    <article className="cheque px-5 pt-5 pb-5">
       <div className="relative">
-        <div className="flex items-start justify-between gap-3">
-          <p className="font-display text-lg font-medium tracking-display">Float</p>
-          <p className="kicker">tUSD8</p>
+        <div className="flex items-center justify-between gap-3">
+          <span className="flex items-center gap-2 text-sm font-medium">
+            <ChainIcon />
+            Aevum
+          </span>
+          <TokenIcon />
         </div>
-        <p className="kicker mt-8">Your balance</p>
+        <p className="kicker mt-6">Balance</p>
         <Figures value={formatTusd(balance)} />
-        <div className="mt-5 grid grid-cols-2 gap-3 border-t border-line pt-3">
+        <div className="split mt-5 grid grid-cols-2 gap-3 pt-3">
           <div>
             <p className="kicker">Free</p>
-            <p className="mt-1 font-mono text-sm text-ink">{formatTusd(free)}</p>
+            <p className="amount mt-1 font-mono text-sm">{formatTusd(free)}</p>
           </div>
           <div>
             <p className="kicker">Reserved</p>
-            <p className="mt-1 font-mono text-sm text-ink">{formatTusd(reserved)}</p>
+            <p className="amount mt-1 font-mono text-sm">{formatTusd(reserved)}</p>
           </div>
         </div>
-        <p className="mt-3 break-all font-mono text-xs tracking-wide text-muted">{account}</p>
+        {account ? <p className="mt-3 font-mono text-xs tracking-wide opacity-70">{shortAddr(account)}</p> : null}
       </div>
     </article>
   );
 }
 
-function Guilloche() {
-  const waves = [0, 1, 2, 3, 4, 5, 6, 7];
+function ChainIcon() {
   return (
-    <svg className="pointer-events-none absolute inset-0 h-full w-full text-seal opacity-20" viewBox="0 0 400 220" preserveAspectRatio="none" aria-hidden="true">
-      {waves.map((index) => (
-        <path
-          key={index}
-          d={`M-10 ${28 + index * 18} C 70 ${index % 2 === 0 ? 8 : 48}, 150 ${index % 2 === 0 ? 52 : 6}, 230 ${30 + index * 16} S 340 ${index % 2 === 0 ? 70 : 12}, 420 ${24 + index * 18}`}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="0.7"
-        />
-      ))}
+    <svg viewBox="0 0 32 32" className="size-6" role="img" aria-label="QDay">
+      <circle cx="16" cy="16" r="16" fill="#111111" />
+      <circle cx="15" cy="15" r="5.4" fill="none" stroke="#ffffff" strokeWidth="2.2" />
+      <path d="M18.4 18.4 22.2 22.2" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function TokenIcon() {
+  return (
+    <svg viewBox="0 0 32 32" className="size-6" role="img" aria-label="tUSD8">
+      <circle cx="16" cy="16" r="16" fill="#2f5bff" />
+      <path
+        d="M16 7.2v2.1M16 22.7v2.1M12.2 12.4c.4-1.5 1.8-2.3 3.8-2.3 2.2 0 3.6 1 3.6 2.6 0 1.5-1 2.2-3.4 2.7l-1.2.3c-2.8.6-4.4 1.6-4.4 3.8 0 2 1.8 3.3 4.4 3.3 2.3 0 4-1 4.5-2.7"
+        fill="none"
+        stroke="#ffffff"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
     </svg>
   );
 }
@@ -1604,30 +1693,42 @@ function SendPanel({
         <p className="kicker">Review</p>
         <h2 className="mt-2 font-display text-xl font-medium tracking-display">Send money</h2>
         <dl className="mt-5 space-y-4 text-sm">
-          <div className="flex items-baseline justify-between gap-3 border-b border-line pb-3">
+          <div className="flex items-baseline justify-between gap-3">
             <dt className="kicker">To</dt>
-            <dd className="text-right font-mono text-ink">{labelOf(review.payee)}</dd>
+            <dd className="text-right text-ink">{labelOf(review.payee)}</dd>
           </div>
-          <div className="flex items-baseline justify-between gap-3 border-b border-line pb-3">
+          <div className="flex items-baseline justify-between gap-3">
             <dt className="kicker">Amount</dt>
-            <dd className="font-display text-3xl font-bold tracking-display">{formatTusd(review.amount)}</dd>
+            <dd className="flex items-center gap-2 font-display text-3xl font-medium tracking-display">
+              <TokenIcon />
+              {formatTusd(review.amount)}
+            </dd>
           </div>
-          <div className="flex items-baseline justify-between gap-3">
-            <dt className="kicker">Memo</dt>
-            <dd className="text-ink">{review.memo || "None"}</dd>
-          </div>
-          <div className="flex items-baseline justify-between gap-3">
-            <dt className="kicker">Fee</dt>
-            <dd className="text-ink">None</dd>
-          </div>
+          {review.memo ? (
+            <div className="flex items-baseline justify-between gap-3">
+              <dt className="kicker">For</dt>
+              <dd className="text-ink">{review.memo}</dd>
+            </div>
+          ) : null}
+          {review.repeat ? (
+            <>
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="kicker">Every</dt>
+                <dd className="text-ink">{Number(every) >= 7 * DAY_MS ? "Week" : Number(every) >= DAY_MS ? "Day" : "Hour"}</dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="kicker">Payments</dt>
+                <dd className="text-ink">{Number(every) >= 7 * DAY_MS ? 12 : 6}</dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="kicker">Reserved</dt>
+                <dd className="text-ink">{formatTusd(review.amount * (Number(every) >= 7 * DAY_MS ? 12 : 6))}</dd>
+              </div>
+            </>
+          ) : null}
         </dl>
-        <p className="mt-4 text-sm text-muted">
-          {review.repeat
-            ? `Repeats ${Number(every) >= 7 * DAY_MS ? "weekly" : Number(every) >= DAY_MS ? "daily" : "hourly"}, ${Number(every) >= 7 * DAY_MS ? 12 : Number(every) >= DAY_MS ? 24 : 6} times, through an agent mandate on Aevum.`
-            : "This payment is yours. No agent spending limit applies. Live gas, if any, is tQDAY and is not taken from this balance."}
-        </p>
         <div className="mt-4 flex flex-wrap gap-2">
-          <button type="button" className={primary} disabled={busy || !!hold} title={hold ?? undefined} onClick={() => onConfirm(Number(every))}>
+          <button type="button" className={`${primary} w-full`} disabled={busy || !!hold} title={hold ?? undefined} onClick={() => onConfirm(Number(every))}>
             Confirm
           </button>
           <button type="button" className={ghost} onClick={onBack}>
@@ -1642,13 +1743,12 @@ function SendPanel({
     <div className="space-y-4">
       <div>
         <h2 className="font-display text-xl font-medium tracking-display">Send money</h2>
-        <p className="text-sm text-muted">Person to person. An agent is not required.</p>
       </div>
       <div className="flex rounded-lg bg-paper p-1 shadow-plane" role="group" aria-label="Send kind">
-        <button type="button" aria-pressed={mode === "once"} className={`press min-h-11 flex-1 rounded-md text-sm ${mode === "once" ? "bg-seal text-paper" : "text-muted"}`} onClick={() => setMode("once")}>
+        <button type="button" aria-pressed={mode === "once"} className={`press min-h-11 flex-1 rounded-md text-sm ${mode === "once" ? "bg-seal text-on-seal" : "text-muted"}`} onClick={() => setMode("once")}>
           Once
         </button>
-        <button type="button" aria-pressed={mode === "repeat"} className={`press min-h-11 flex-1 rounded-md text-sm ${mode === "repeat" ? "bg-seal text-paper" : "text-muted"}`} onClick={() => setMode("repeat")}>
+        <button type="button" aria-pressed={mode === "repeat"} className={`press min-h-11 flex-1 rounded-md text-sm ${mode === "repeat" ? "bg-seal text-on-seal" : "text-muted"}`} onClick={() => setMode("repeat")}>
           Schedule
         </button>
       </div>
@@ -1684,7 +1784,7 @@ function SendPanel({
           </select>
         </label>
       ) : null}
-      <button type="button" className={primary} disabled={busy || !!hold} title={hold ?? undefined} onClick={onReview}>
+      <button type="button" className={`${primary} w-full`} disabled={busy || !!hold} title={hold ?? undefined} onClick={onReview}>
         Review
       </button>
       {hold ? <p className="text-xs text-muted">{hold}</p> : null}
@@ -1714,15 +1814,6 @@ function SendPanel({
           ))}
         </ul>
       ) : null}
-    </div>
-  );
-}
-
-function ConfigRow({ k, v }: { k: string; v: string }) {
-  return (
-    <div className="flex items-baseline justify-between gap-3 border-b border-line py-1.5">
-      <dt className="text-muted">{k}</dt>
-      <dd className="truncate text-ink">{v || "—"}</dd>
     </div>
   );
 }
@@ -1767,20 +1858,38 @@ function rel(ts: number, clock: number): string {
   return `${Math.round(hours / 24)}d`;
 }
 
-function Welcome({ onContinue }: { onContinue: () => void }) {
+function Welcome({ onContinue }: { onContinue: (name: string) => void }) {
+  const [draft, setDraft] = useState("");
+  const clean = draft.trim().slice(0, 24);
   return (
-    <div className="grid min-h-screen place-items-center bg-paper px-6 text-ink">
-      <div className="w-full max-w-md text-center">
+    <div className="welcome bg-paper text-ink">
+      <form
+        className="enter w-full max-w-md text-center"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (clean) onContinue(clean);
+        }}
+      >
         <div className="mx-auto w-fit">
           <Mark />
         </div>
-        <h1 className="mt-6 font-display text-4xl font-medium tracking-display">Float</h1>
-        <p className="mt-3 text-lg">Give your agents a float, not your keys.</p>
-        <p className="mt-2 text-sm text-muted">An agent wallet. You talk. You approve. The agent never holds the keys.</p>
-        <button type="button" className={`${primary} mt-8`} onClick={onContinue}>
-          Open wallet
+        <h1 className="mt-6 font-display text-4xl font-medium tracking-display">Give your agents a float, not your keys.</h1>
+        <p className="mt-3 text-sm text-muted">You talk. You approve. The agent never holds the keys.</p>
+        <label className="mt-8 block text-left text-sm">
+          What should the agent call you?
+          <input
+            className={`${field} mt-2`}
+            value={draft}
+            maxLength={24}
+            autoComplete="nickname"
+            placeholder="Your name"
+            onChange={(event) => setDraft(event.target.value)}
+          />
+        </label>
+        <button type="submit" className={`${primary} mt-4 w-full`} disabled={!clean}>
+          Continue
         </button>
-      </div>
+      </form>
     </div>
   );
 }
