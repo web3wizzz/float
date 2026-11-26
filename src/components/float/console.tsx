@@ -153,7 +153,8 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
   const [allow, setAllow] = useState<string[]>([DIRECTORY[0].address, DIRECTORY[1].address]);
   const [showAdd, setShowAdd] = useState(false);
   const [agentError, setAgentError] = useState<string | null>(null);
-  const [onVault, setOnVault] = useState<boolean | null>(null);
+  const [vaultAgents, setVaultAgents] = useState<Record<string, boolean>>({});
+  const [settled, setSettled] = useState(0);
   const [utterance, setUtterance] = useState("send 5 tUSD8 to DataRelay every week");
   const [pending, setPending] = useState<AgentAction | null>(null);
   const [thread, setThread] = useState<ThreadMsg[]>([]);
@@ -232,23 +233,27 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
   }, [ready, live]);
 
   useEffect(() => {
-    const who = ledger.agents.find((item) => item.active) ?? ledger.agents[0];
-    if (!live || !publicClient || !who || !isHexAddress(who.address)) {
-      setOnVault(null);
+    if (!live || !publicClient) {
+      setVaultAgents({});
       return;
     }
+    const addresses = ledger.agents.map((item) => item.address).filter(isHexAddress);
     let cancel = false;
-    void readAgentActive(publicClient, who.address)
-      .then((active) => {
-        if (!cancel) setOnVault(active);
-      })
-      .catch(() => {
-        if (!cancel) setOnVault(false);
-      });
+    void Promise.all(
+      addresses.map(async (address) => {
+        try {
+          return [address.toLowerCase(), await readAgentActive(publicClient, address)] as const;
+        } catch {
+          return [address.toLowerCase(), false] as const;
+        }
+      }),
+    ).then((rows) => {
+      if (!cancel) setVaultAgents(Object.fromEntries(rows));
+    });
     return () => {
       cancel = true;
     };
-  }, [live, publicClient, ledger.agents, receipts]);
+  }, [live, publicClient, ledger.agents, settled]);
 
   useEffect(() => {
     if (!live || !publicClient) return;
@@ -330,6 +335,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
         if (hash) {
           await publicClient.waitForTransactionReceipt({ hash });
           setChainPays(await readVaultPayments(publicClient));
+          setSettled((count) => count + 1);
         }
       } else {
         record({ ok: false, title, detail: result.reason, hashes: [] });
@@ -1065,12 +1071,14 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
             <ul className="space-y-3">
               {ledger.invoices.map((inv) => {
                 const done = inv.status === "released" || inv.status === "refunded";
+                const outcome = inv.status === "released" ? "Paid" : inv.status === "refunded" ? "Returned" : null;
                 return (
                 <li key={inv.id} className="plane p-4">
                   <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0">
                       <p className="font-display text-lg font-medium tracking-display">{labelOf(inv.payee)}</p>
                       <p className="truncate text-sm text-muted">{inv.metadata}</p>
+                      {outcome ? <p className="mt-1 text-sm text-ink">{outcome}</p> : null}
                     </div>
                     <p className={`flex items-center gap-2 font-display text-2xl font-medium tracking-display ${done ? "text-muted" : "text-ink"}`}>
                       <TokenIcon />
@@ -1201,6 +1209,9 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
             ) : ledger.agents.length === 0 ? null : (
               ledger.agents.map((item) => {
                 const spent = clock == null ? 0 : spentInWindow(item, clock);
+                const key = item.address.toLowerCase();
+                const known = key in vaultAgents;
+                const approved = vaultAgents[key] === true;
                 return (
                   <article key={item.address} className="plane space-y-3 p-2">
                     <div className="flex items-start justify-between gap-3 px-3 pt-3">
@@ -1219,12 +1230,12 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
                       {item.perTxLimit} per payment · allowlist {item.allowAny ? "any payee" : item.allow.map((entry) => labelOf(entry)).join(", ") || "none"}
                       {item.expiry ? ` · expires ${format(item.expiry, "MMM d")}` : ""}
                     </p>
-                    {live ? (
+                    {live && known ? (
                       <p className="mt-2 text-xs text-muted">
-                        {onVault ? "Approved on the Aevum vault." : "In this app. Not on the vault until you approve this address."}
+                        {approved ? "Approved on Aevum." : "Not on Aevum until you approve this address."}
                       </p>
                     ) : null}
-                    {live && onVault === false ? (
+                    {live && known && !approved ? (
                       <button
                         type="button"
                         className={`${primary} mt-3`}
@@ -1698,6 +1709,22 @@ function SendPanel({
               <dt className="kicker">For</dt>
               <dd className="text-ink">{review.memo}</dd>
             </div>
+          ) : null}
+          {review.repeat ? (
+            <>
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="kicker">Every</dt>
+                <dd className="text-ink">{Number(every) >= 7 * DAY_MS ? "Week" : Number(every) >= DAY_MS ? "Day" : "Hour"}</dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="kicker">Payments</dt>
+                <dd className="text-ink">{Number(every) >= 7 * DAY_MS ? 12 : 6}</dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="kicker">Reserved</dt>
+                <dd className="text-ink">{formatTusd(review.amount * (Number(every) >= 7 * DAY_MS ? 12 : 6))}</dd>
+              </div>
+            </>
           ) : null}
         </dl>
         <div className="mt-4 flex flex-wrap gap-2">
