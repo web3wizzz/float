@@ -162,6 +162,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
   const [thread, setThread] = useState<ThreadMsg[]>([]);
   const composerRef = useRef<HTMLInputElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [walletsOpen, setWalletsOpen] = useState(false);
   const [intro, setIntro] = useState(surface === "app");
   const [note, setNote] = useState<string | null>(null);
@@ -839,9 +840,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
                       className="press flex min-h-11 w-full items-center rounded-md px-3 text-left text-sm text-ink"
                       onClick={() => {
                         setWalletsOpen(false);
-                        void connect({ connector, chainId }).catch(() => {
-                          setNote("Open this page in your wallet. Any Ethereum wallet can connect.");
-                        });
+                        void connect({ connector, chainId });
                       }}
                     >
                       {connector.id === "injected" ? "Browser wallet" : connector.name}
