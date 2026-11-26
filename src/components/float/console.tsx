@@ -80,6 +80,7 @@ const queryClient = new QueryClient();
 const wagmiConfig = createConfig({
   chains: [aevumTestnet],
   connectors: [injected()],
+  multiInjectedProviderDiscovery: true,
   transports: { [aevumTestnet.id]: http(rpcUrl) },
   ssr: true,
 });
@@ -162,6 +163,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
   const composerRef = useRef<HTMLInputElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [walletsOpen, setWalletsOpen] = useState(false);
   const [intro, setIntro] = useState(surface === "app");
   const [note, setNote] = useState<string | null>(null);
   const [contact, setContact] = useState(DIRECTORY[1].address);
@@ -801,23 +803,19 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
           <div className="flex min-w-0 items-center" aria-label="Float">
             <Mark />
           </div>
-          <div className="flex items-center gap-2">
+          <div className="relative flex items-center gap-2">
             <button
               type="button"
               className={isConnected && walletChain === chainId ? ghost : primary}
               disabled={isPending}
               aria-label={!isConnected ? "Connect wallet" : walletChain !== chainId ? "Switch network" : shortAddr(wallet ?? "Wallet")}
+              aria-expanded={!isConnected ? walletsOpen : undefined}
               onClick={() => {
                 if (!isConnected) {
-                  const connector = connectors[0];
-                  if (connector) {
-                    void connect({ connector, chainId });
-                    return;
-                  }
-                  const here = `${window.location.host}${window.location.pathname}`;
-                  window.location.href = `https://metamask.app.link/dapp/${here}`;
+                  setWalletsOpen((open) => !open);
                   return;
                 }
+                setWalletsOpen(false);
                 if (walletChain !== chainId) void switchChainAsync({ chainId });
               }}
             >
@@ -826,6 +824,31 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
                 {walletChain !== chainId ? "Switch network" : shortAddr(wallet ?? "")}
               </span>
             </button>
+            {walletsOpen && !isConnected ? (
+              <div className="absolute right-0 top-12 z-30 w-52 rounded-lg bg-paper p-1 shadow-plane" role="menu">
+                {(() => {
+                  const found = connectors.filter((connector) => connector.id !== "injected");
+                  const list = found.length > 0 ? found : connectors;
+                  if (list.length === 0) {
+                    return <p className="px-3 py-3 text-sm text-muted">Open this page in your wallet.</p>;
+                  }
+                  return list.map((connector) => (
+                    <button
+                      key={connector.uid}
+                      type="button"
+                      role="menuitem"
+                      className="press flex min-h-11 w-full items-center rounded-md px-3 text-left text-sm text-ink"
+                      onClick={() => {
+                        setWalletsOpen(false);
+                        void connect({ connector, chainId });
+                      }}
+                    >
+                      {connector.id === "injected" ? "Browser wallet" : connector.name}
+                    </button>
+                  ));
+                })()}
+              </div>
+            ) : null}
             <button type="button" className={iconBtn} aria-label="Settings" onClick={() => setSettingsOpen(true)}>
               <Settings className="size-4" aria-hidden="true" />
             </button>
