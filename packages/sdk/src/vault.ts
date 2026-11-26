@@ -13,7 +13,9 @@ import {
   type PublicClient,
   type WalletClient,
   stringToHex,
+  toFunctionSelector,
 } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import { agentPaidEvent, agentVaultAbi, eip3009Abi, erc20Abi } from "./abi.ts";
 import { aevumTestnet, chainId, escrowAddress, tusd8, tusd8Decimals, vaultAddress, vaultDeployBlock } from "./config.ts";
 import { getLogsChunked } from "./logs.ts";
@@ -300,7 +302,7 @@ export async function payFromVault(
   });
 }
 
-/** Owner spend. Does not use an agent policy. The live vault must include `payAsOwner`. */
+/** Owner spend. Uses payAsOwner when the deployed vault has it. Otherwise withdraws free balance and transfers tUSD8. */
 export async function payAsOwnerOnVault(
   publicClient: PublicClient,
   wallet: WalletClient,
@@ -312,14 +314,93 @@ export async function payAsOwnerOnVault(
   if (typeof vault !== "string") return vault;
   const account = accountOf(wallet);
   if (!("address" in account)) return account;
+  const writer = { writeContract: wallet.writeContract.bind(wallet), account };
+  if (await vaultHas("payAsOwner(address,uint256,bytes32)", publicClient)) {
+    return simulateAndSend(publicClient, writer, {
+      account,
+      address: vault,
+      abi: agentVaultAbi,
+      functionName: "payAsOwner",
+      args: [payee, amount, memoBytes(memo)],
+      chain: aevumTestnet,
+    });
+  }
+  const withdrawn = await simulateAndSend(publicClient, writer, {
+    account,
+    address: vault,
+    abi: agentVaultAbi,
+    functionName: "withdraw",
+    args: [amount],
+    chain: aevumTestnet,
+  });
+  if (!withdrawn.ok) return withdrawn;
+  const withdrawnHash = withdrawn.hashes[0];
+  if (withdrawnHash) await publicClient.waitForTransactionReceipt({ hash: withdrawnHash });
+  const sent = await simulateAndSend(publicClient, writer, {
+    account,
+    address: tusd8,
+    abi: erc20Abi,
+    functionName: "transfer",
+    args: [payee, amount],
+    chain: aevumTestnet,
+  });
+  if (!sent.ok) return { ok: false, reason: `tUSD8 is in your wallet. The transfer did not finish. ${sent.reason}` };
+  return { ok: true, hashes: [...withdrawn.hashes, ...sent.hashes] };
+}
+
+/** The browser agent signs. The connected wallet only pays gas and submits. */
+export async function executeAgentIntent(
+  publicClient: PublicClient,
+  wallet: WalletClient,
+  agentKey: `0x${string}`,
+  payee: Address,
+  amount: bigint,
+  memo: string,
+): Promise<TxResult> {
+  const vault = requireVault();
+  if (typeof vault !== "string") return vault;
+  const account = accountOf(wallet);
+  if (!("address" in account)) return account;
+  const agent = privateKeyToAccount(agentKey);
+  const nonce = await publicClient.readContract({
+    address: vault,
+    abi: agentVaultAbi,
+    functionName: "nonces",
+    args: [agent.address],
+  });
+  const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+  const memo32 = memoBytes(memo);
+  const signature = await agent.signTypedData({
+    domain: { name: "Float Vault", version: "1", chainId, verifyingContract: vault },
+    types: {
+      PaymentIntent: [
+        { name: "agent", type: "address" },
+        { name: "payee", type: "address" },
+        { name: "amount", type: "uint256" },
+        { name: "memo", type: "bytes32" },
+        { name: "nonce", type: "uint256" },
+        { name: "deadline", type: "uint256" },
+      ],
+    },
+    primaryType: "PaymentIntent",
+    message: { agent: agent.address, payee, amount, memo: memo32, nonce, deadline },
+  });
   return simulateAndSend(publicClient, { writeContract: wallet.writeContract.bind(wallet), account }, {
     account,
     address: vault,
     abi: agentVaultAbi,
-    functionName: "payAsOwner",
-    args: [payee, amount, memoBytes(memo)],
+    functionName: "executeIntent",
+    args: [{ agent: agent.address, payee, amount, memo: memo32, nonce, deadline }, signature],
     chain: aevumTestnet,
   });
+}
+
+async function vaultHas(signature: string, publicClient: PublicClient): Promise<boolean> {
+  const vault = vaultAddress();
+  if (!vault) return false;
+  const code = await publicClient.getBytecode({ address: vault });
+  const selector = toFunctionSelector(signature).slice(2);
+  return Boolean(code?.toLowerCase().includes(selector));
 }
 
 export async function pauseAgentOnVault(publicClient: PublicClient, wallet: WalletClient, agent: Address, paused: boolean): Promise<TxResult> {
