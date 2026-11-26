@@ -8,7 +8,7 @@ import { injected } from "wagmi/connectors";
 import type { Address } from "viem";
 import { chainId, configured, explorerUrl, aevumTestnet, isHexAddress, rpcUrl, tusd8Decimals } from "@/lib/float/config";
 import { DEFAULT_AGENT, DIRECTORY, labelOf, resolvePayee, shortAddr } from "@/lib/float/directory";
-import { localAgent } from "@/lib/float/agent-key";
+import { localAgent, localAgentKey } from "@/lib/float/agent-key";
 import {
   HOUR_MS,
   DAY_MS,
@@ -43,6 +43,7 @@ import { describeAction, parseUtterance, type AgentAction } from "@/lib/float/pa
 import {
   createScheduleOnVault,
   depositToVault,
+  executeAgentIntent,
   executeScheduleOnVault,
   pauseAgentOnVault,
   pauseVaultOnVault,
@@ -179,6 +180,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
   const [busy, setBusy] = useState(false);
   const [working, setWorking] = useState(false);
   const [moving, setMoving] = useState<string | null>(null);
+  const [slip, setSlip] = useState<{ title: string; amount?: number; who?: string; hash?: string } | null>(null);
   const { address: wallet, chainId: walletChain, isConnected } = useAccount();
   const { connect, connectors, isPending } = useConnect();
   const { switchChainAsync } = useSwitchChain();
@@ -217,6 +219,13 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
     if (storedTheme === "dark" || storedTheme === "light") setTheme(storedTheme);
     setReady(true);
   }, []);
+
+  useEffect(() => {
+    if (!intro || !ready || named === null) return;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const id = window.setTimeout(() => setIntro(false), reduce ? 200 : 1600);
+    return () => window.clearTimeout(id);
+  }, [intro, ready, named]);
 
   useEffect(() => {
     if (!ready) return;
@@ -307,15 +316,16 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
     if (result.proof) setLastProof(result.proof);
   }
 
-  function record(entry: Omit<Receipt, "id">) {
+  function record(entry: Omit<Receipt, "id">, quiet = false) {
     setReceipts((prev) => [{ ...entry, id: Date.now() }, ...prev].slice(0, 12));
-    setNote(entry.detail);
+    if (!quiet) setNote(entry.detail);
     if (!entry.ok) setTab("activity");
   }
 
   async function liveSend(
     title: string,
     run: (pc: NonNullable<typeof publicClient>, wc: NonNullable<typeof walletClient>) => Promise<TxResult>,
+    about?: { amount?: number; who?: string },
   ) {
     if (!publicClient || !walletClient) {
       record({ ok: false, title, detail: "Connect a wallet on Aevum before this can send.", hashes: [] });
@@ -329,13 +339,15 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
         return;
       }
     }
+    const money = /money|schedule|withdraw|buy/i.test(title);
     setBusy(true);
-    if (/money|schedule|withdraw/i.test(title)) setMoving(title);
+    if (money) setMoving(title);
     try {
       const result = await run(publicClient, walletClient);
       if (result.ok) {
-        record({ ok: true, title, detail: result.hashes.map((hash) => `${explorerUrl}/tx/${hash}`).join(" "), hashes: [...result.hashes] });
         const hash = result.hashes[0];
+        record({ ok: true, title, detail: hash ? "Sent" : title, hashes: [...result.hashes] }, money);
+        if (money) setSlip({ title, amount: about?.amount, who: about?.who, hash });
         if (hash) {
           await publicClient.waitForTransactionReceipt({ hash });
           setChainPays(await readVaultPayments(publicClient));
@@ -368,7 +380,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
 
   function onDeposit(value = Number(fundAmt)) {
     if (live) {
-      void liveSend("Add money", (pc, wc) => depositToVault(pc, wc, wholeToBase(value)));
+      void liveSend("Add money", (pc, wc) => depositToVault(pc, wc, wholeToBase(value)), { amount: value, who: "Your vault" });
       return;
     }
     apply(deposit(ledger, value, at()));
@@ -376,7 +388,10 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
 
   function onWithdraw() {
     if (live) {
-      void liveSend("Withdraw", (pc, wc) => withdrawFromVault(pc, wc, wholeToBase(Number(fundAmt))));
+      void liveSend("Withdraw", (pc, wc) => withdrawFromVault(pc, wc, wholeToBase(Number(fundAmt))), {
+        amount: Number(fundAmt),
+        who: "You",
+      });
       return;
     }
     apply(withdraw(ledger, Number(fundAmt), at()));
@@ -384,7 +399,10 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
 
   function onSendYou(payee: string, amount: number, noteText: string) {
     if (live) {
-      void liveSend("Send money", (pc, wc) => payAsOwnerOnVault(pc, wc, asAddress(payee), wholeToBase(amount), noteText));
+      void liveSend("Send money", (pc, wc) => payAsOwnerOnVault(pc, wc, asAddress(payee), wholeToBase(amount), noteText), {
+        amount,
+        who: labelOf(payee),
+      });
       return;
     }
     apply(sendAsYou(ledger, { payee, amount, memo: noteText }, at()));
@@ -408,6 +426,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
           runs,
           noteText || "recurring",
         ),
+        { amount, who: labelOf(payee) },
       );
       return;
     }
@@ -454,7 +473,12 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
 
   function onBuy() {
     if (live) {
-      record({ ok: false, title: "Oracle", detail: "A live agent payment has to be signed by that agent. Use the float CLI, not the owner wallet.", hashes: [] });
+      const oracle = ledger.x402[0];
+      void liveSend(
+        "Buy oracle",
+        (pc, wc) => executeAgentIntent(pc, wc, localAgentKey(), asAddress(oracle.payTo), wholeToBase(oracle.price), "oracle"),
+        { amount: oracle.price, who: labelOf(oracle.payTo) },
+      );
       return;
     }
     const result = buyX402(ledger, "oracle", at());
@@ -740,9 +764,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
     );
   }
 
-  if (intro) return <BubbleIntro onDone={() => setIntro(false)} />;
-
-  if (named === null || !ready) return <div className="min-h-screen bg-paper" />;
+  if (named === null || !ready || intro) return <BubbleIntro />;
   if (!named) {
     return (
       <Welcome
@@ -783,19 +805,26 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
             <button
               type="button"
               className={isConnected && walletChain === chainId ? ghost : primary}
-              disabled={isPending || (!isConnected && connectors.length === 0)}
+              disabled={isPending}
               aria-label={!isConnected ? "Connect wallet" : walletChain !== chainId ? "Switch network" : shortAddr(wallet ?? "Wallet")}
               onClick={() => {
                 if (!isConnected) {
                   const connector = connectors[0];
-                  if (connector) void connect({ connector, chainId });
+                  if (connector) {
+                    void connect({ connector, chainId });
+                    return;
+                  }
+                  const here = `${window.location.host}${window.location.pathname}`;
+                  window.location.href = `https://metamask.app.link/dapp/${here}`;
                   return;
                 }
                 if (walletChain !== chainId) void switchChainAsync({ chainId });
               }}
             >
-              <Wallet className="size-4 sm:hidden" aria-hidden="true" />
-              <span className="hidden sm:inline">{!isConnected ? "Connect wallet" : walletChain !== chainId ? "Switch network" : shortAddr(wallet ?? "")}</span>
+              {!isConnected ? <span>Connect wallet</span> : <Wallet className="size-4 sm:hidden" aria-hidden="true" />}
+              <span className={isConnected ? "hidden sm:inline" : "hidden"}>
+                {walletChain !== chainId ? "Switch network" : shortAddr(wallet ?? "")}
+              </span>
             </button>
             <button type="button" className={iconBtn} aria-label="Settings" onClick={() => setSettingsOpen(true)}>
               <Settings className="size-4" aria-hidden="true" />
@@ -937,11 +966,8 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block font-display text-base font-medium tracking-display">{agent.label}</span>
-                  <span className="block text-xs text-muted">
-                    {formatTusd(Math.max(0, agent.dailyLimit - (clock == null ? 0 : spentInWindow(agent, clock))))} left today · {agent.perTxLimit} per payment
-                  </span>
+                  <span className="block text-xs text-muted">{agent.active && !agent.paused ? "Can spend" : agent.paused ? "Paused" : "Stopped"}</span>
                 </span>
-                <span className="pr-2 text-sm font-medium text-seal">Manage</span>
               </button>
             ) : null}
             <section>
@@ -1001,7 +1027,11 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
             }}
             onExecute={(id) => {
               if (live) {
-                void liveSend(`Send schedule #${id}`, (pc, wc) => executeScheduleOnVault(pc, wc, BigInt(id)));
+                const due = ledger.schedules.find((item) => item.id === id);
+                void liveSend(`Send schedule #${id}`, (pc, wc) => executeScheduleOnVault(pc, wc, BigInt(id)), {
+                  amount: due?.amount,
+                  who: due ? labelOf(due.payee) : undefined,
+                });
                 return;
               }
               apply(executeSchedule(ledger, id, at()));
@@ -1091,10 +1121,13 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
                 return (
                 <li key={inv.id} className="plane p-4">
                   <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0">
-                      <p className="font-display text-lg font-medium tracking-display">{labelOf(inv.payee)}</p>
-                      <p className="truncate text-sm text-muted">{inv.metadata}</p>
-                      {outcome ? <p className="mt-1 text-sm text-ink">{outcome}</p> : null}
+                    <div className="flex min-w-0 items-center gap-3">
+                      <Face name={labelOf(inv.payee)} />
+                      <div className="min-w-0">
+                        <p className="font-display text-lg font-medium tracking-display">{labelOf(inv.payee)}</p>
+                        <p className="truncate text-sm text-muted">{inv.metadata}</p>
+                        {outcome ? <p className="mt-1 text-sm text-ink">{outcome}</p> : null}
+                      </div>
                     </div>
                     <p className={`flex items-center gap-2 font-display text-2xl font-medium tracking-display ${done ? "text-muted" : "text-ink"}`}>
                       <TokenIcon />
@@ -1316,13 +1349,16 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
             {live && chainPays.length > 0 ? (
               <ul className="plane p-4">
                 {chainPays.map((item) => (
-                  <li key={item.hash} className="border-b border-line py-3 last:border-b-0">
+                  <li key={item.hash} className="flex items-center gap-3 border-b border-line py-3 last:border-b-0">
+                    <Face name="Aevum" />
+                    <div className="min-w-0">
                     <p className="text-sm text-ink">
                       Paid {(Number(item.amount) / 10 ** tusd8Decimals).toLocaleString("en-US", { maximumFractionDigits: tusd8Decimals })} tUSD8 on Aevum
                     </p>
                     <a className="mt-1 block truncate font-mono text-xs text-seal" href={`${explorerUrl}/tx/${item.hash}`} target="_blank" rel="noreferrer">
                       {item.hash}
                     </a>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -1330,7 +1366,9 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
             {receipts.length > 0 ? (
               <ul className="plane p-4">
                 {receipts.map((item) => (
-                  <li key={item.id} className="border-b border-line py-3 last:border-b-0">
+                  <li key={item.id} className="flex items-center gap-3 border-b border-line py-3 last:border-b-0">
+                    <Face name={item.title} />
+                    <div className="min-w-0">
                     <p className={`text-sm ${item.ok ? "text-ink" : "text-stamp"}`}>{item.title}</p>
                     {item.hashes.length === 0 ? <p className="mt-1 text-sm text-muted">{item.detail}</p> : null}
                     {item.hashes.map((hash) => (
@@ -1338,6 +1376,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
                         {hash}
                       </a>
                     ))}
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -1459,7 +1498,17 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
           </div>
         </div>
       </div>
-      {moving ? <MoveScreen label={moving} /> : null}
+      {slip ? (
+        <ReceiptScreen
+          title={slip.title}
+          amount={slip.amount}
+          who={slip.who}
+          hash={slip.hash}
+          onDone={() => setSlip(null)}
+        />
+      ) : moving ? (
+        <MoveScreen label={moving} />
+      ) : null}
     </div>
   );
 }
@@ -1476,6 +1525,64 @@ function Mark({ tone = "seal", size = "md" }: { tone?: "seal" | "paper"; size?: 
         <path d="M40 36 H152 V84 H88 V116 H216 V164 H88 V212 H40 Z" />
       </svg>
     </span>
+  );
+}
+
+function Face({ name, size = "md" }: { name: string; size?: "sm" | "md" }) {
+  const letters =
+    name
+      .replace(/[^A-Za-z0-9 ]/g, " ")
+      .trim()
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((word) => word[0] ?? "")
+      .join("")
+      .toUpperCase() || "•";
+  return (
+    <span
+      className={`grid shrink-0 place-items-center rounded-full bg-seal font-display font-medium text-on-seal ${size === "sm" ? "size-8 text-xs" : "size-11 text-sm"}`}
+      aria-hidden="true"
+    >
+      {letters}
+    </span>
+  );
+}
+
+function ReceiptScreen({
+  title,
+  amount,
+  who,
+  hash,
+  onDone,
+}: {
+  title: string;
+  amount?: number;
+  who?: string;
+  hash?: string;
+  onDone: () => void;
+}) {
+  return (
+    <div className="send-screen" role="status" aria-live="polite" aria-label={title}>
+      <span className="rise-bubble rise-a" />
+      <span className="rise-bubble rise-b" />
+      <span className="rise-bubble rise-c" />
+      <span className="rise-bubble rise-d" />
+      <span className="rise-bubble rise-e" />
+      <div className="send-mark">
+        <span className="rise-shell send-shell" />
+        {who ? <Face name={who} /> : <Mark size="lg" />}
+        <p className="mt-6 font-display text-4xl font-medium tracking-display">{amount != null ? formatTusd(amount) : title}</p>
+        {who ? <p className="mt-1 text-sm text-ink">To {who}</p> : null}
+        {hash ? (
+          <a className="mt-3 text-sm text-seal" href={`${explorerUrl}/tx/${hash}`} target="_blank" rel="noreferrer">
+            View on Aevum
+          </a>
+        ) : null}
+        <button type="button" className={`${primary} mt-6`} onClick={onDone}>
+          Done
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -1497,14 +1604,7 @@ function MoveScreen({ label }: { label: string }) {
   );
 }
 
-function BubbleIntro({ onDone }: { onDone: () => void }) {
-  const done = useRef(onDone);
-  done.current = onDone;
-  useEffect(() => {
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const id = window.setTimeout(() => done.current(), reduce ? 240 : 2200);
-    return () => window.clearTimeout(id);
-  }, []);
+function BubbleIntro() {
   return (
     <div className="intro intro-rise" role="status" aria-label="Float">
       <span className="rise-bubble rise-a" />
@@ -1755,7 +1855,10 @@ function SendPanel({
         <dl className="mt-5 space-y-4 text-sm">
           <div className="flex items-baseline justify-between gap-3">
             <dt className="kicker">To</dt>
-            <dd className="text-right text-ink">{labelOf(review.payee)}</dd>
+            <dd className="flex items-center gap-2 text-ink">
+              <Face name={labelOf(review.payee)} size="sm" />
+              {labelOf(review.payee)}
+            </dd>
           </div>
           <div className="flex items-baseline justify-between gap-3">
             <dt className="kicker">Amount</dt>
@@ -1812,16 +1915,27 @@ function SendPanel({
           Schedule
         </button>
       </div>
-      <label className="block text-xs text-muted">
-        Saved contact
-        <select className={`${field} mt-1`} value={contact} onChange={(e) => setContact(e.target.value)}>
-          {DIRECTORY.map((item) => (
-            <option key={item.address} value={item.address}>
-              {item.label}
-            </option>
-          ))}
-        </select>
-      </label>
+      <div className="flex gap-4" role="listbox" aria-label="Saved contact">
+        {DIRECTORY.map((item) => {
+          const on = contact === item.address && !customPayee.trim();
+          return (
+            <button
+              key={item.address}
+              type="button"
+              role="option"
+              aria-selected={on}
+              className="press flex flex-col items-center gap-1"
+              onClick={() => {
+                setContact(item.address);
+                setCustomPayee("");
+              }}
+            >
+              <Face name={item.label} />
+              <span className={`text-xs ${on ? "text-ink" : "text-muted"}`}>{item.label}</span>
+            </button>
+          );
+        })}
+      </div>
       <label className="block text-xs text-muted">
         Or an address
         <input className={`${field} mt-1`} value={customPayee} onChange={(e) => setCustomPayee(e.target.value)} placeholder="0x… or a contact name" />
@@ -1852,13 +1966,16 @@ function SendPanel({
         <ul className="space-y-2">
           {schedules.map((item) => (
             <li key={item.id} className="row flex flex-wrap items-center justify-between gap-2 px-3 py-2">
-              <div>
+              <div className="flex min-w-0 items-center gap-3">
+                <Face name={labelOf(item.payee)} size="sm" />
+                <div>
                 <p className="text-sm">
                   #{item.id} · {formatTusd(item.amount)} → {labelOf(item.payee)}
                 </p>
                 <p className="font-mono text-xs text-muted">
                   {item.agent ? (item.agent.toLowerCase() === DEFAULT_AGENT.address.toLowerCase() ? DEFAULT_AGENT.label : shortAddr(item.agent)) : "You"} · {item.runs}/{item.maxRuns} · {item.active ? "active" : "closed"}
                 </p>
+                </div>
               </div>
               {item.active ? (
                 <div className="flex gap-2">
@@ -1894,14 +2011,14 @@ function Feed({ feed, clock, onEmpty }: { feed: FeedItem[]; clock: number | null
   return (
     <ul>
       {feed.map((item) => (
-        <li key={item.id} className="feed-item border-b border-line py-3 last:border-b-0">
-          <div className="flex items-baseline justify-between gap-3">
-            <p className={`text-sm ${item.ok ? "text-ink" : "text-stamp"}`}>{item.title}</p>
-            <time className="shrink-0 font-mono text-xs text-muted">{clock == null ? "" : rel(item.ts, clock)}</time>
-          </div>
-          <div className="mt-1 flex items-start justify-between gap-3">
-            <p className="text-sm text-muted">{item.detail}</p>
-            <span className="shrink-0 rounded-md bg-surface-2 px-2 py-0.5 font-mono text-xs text-ink">{whoOf(item.actor)}</span>
+        <li key={item.id} className="feed-item flex items-center gap-3 border-b border-line py-3 last:border-b-0">
+          <Face name={whoOf(item.actor)} size="sm" />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-baseline justify-between gap-3">
+              <p className={`text-sm ${item.ok ? "text-ink" : "text-stamp"}`}>{item.title}</p>
+              <time className="shrink-0 font-mono text-xs text-muted">{clock == null ? "" : rel(item.ts, clock)}</time>
+            </div>
+            <p className="mt-1 text-sm text-muted">{item.detail}</p>
           </div>
         </li>
       ))}
@@ -1924,7 +2041,7 @@ function Welcome({ onContinue }: { onContinue: (name: string) => void }) {
   return (
     <div className="welcome bg-paper text-ink">
       <form
-        className="enter w-full max-w-md text-center"
+        className="w-full max-w-md text-center"
         onSubmit={(event) => {
           event.preventDefault();
           if (clean) onContinue(clean);
