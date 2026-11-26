@@ -177,6 +177,8 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [chainPays, setChainPays] = useState<Awaited<ReturnType<typeof readVaultPayments>>>([]);
   const [busy, setBusy] = useState(false);
+  const [working, setWorking] = useState(false);
+  const [moving, setMoving] = useState<string | null>(null);
   const { address: wallet, chainId: walletChain, isConnected } = useAccount();
   const { connect, connectors, isPending } = useConnect();
   const { switchChainAsync } = useSwitchChain();
@@ -328,6 +330,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
       }
     }
     setBusy(true);
+    if (/money|schedule|withdraw/i.test(title)) setMoving(title);
     try {
       const result = await run(publicClient, walletClient);
       if (result.ok) {
@@ -345,6 +348,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
       record({ ok: false, title, detail: err instanceof Error ? err.message : "The payment did not go through.", hashes: [] });
     } finally {
       setBusy(false);
+      setMoving(null);
     }
   }
 
@@ -649,52 +653,47 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
     const node = threadRef.current;
     if (!node) return;
     node.scrollTop = node.scrollHeight;
-  }, [thread, tab]);
+  }, [thread, tab, working]);
 
   function askAgent(text: string) {
     const trimmed = text.trim();
-    if (!trimmed) return;
+    if (!trimmed || working) return;
     const parsed = parseUtterance(trimmed);
     const youId = Date.now();
     setUtterance("");
     setTab("chat");
+    setWorking(true);
+    setThread((prev) => [...prev, { id: youId, role: "you", text: trimmed }]);
+    const pause = new Promise((resolve) => window.setTimeout(resolve, 780));
+    const reply = (line: string, action?: AgentAction) => {
+      setPending(action ?? null);
+      setThread((prev) => [...prev, { id: youId + 1, role: "agent", text: line, action }]);
+      setWorking(false);
+    };
     if (parsed.error || !parsed.action) {
-      setPending(null);
-      setThread((prev) => [
-        ...prev,
-        { id: youId, role: "you", text: trimmed },
-        { id: youId + 1, role: "agent", text: parsed.error ?? `${name}, say what you want the agent to do.` },
-      ]);
+      void pause.then(() => reply(parsed.error ?? `${name}, say what you want the agent to do.`));
       return;
     }
     if (parsed.action.type === "balance") {
-      setPending(null);
-      const youId = Date.now();
       if (live && publicClient) {
-        void readVaultAvailable(publicClient).then((free) => {
+        void Promise.all([pause, readVaultAvailable(publicClient)]).then(([, free]) => {
           const line =
             free == null
               ? "No vault is available on Aevum yet."
               : `${name}, free on Aevum is ${(Number(free) / 10 ** tusd8Decimals).toLocaleString("en-US", { maximumFractionDigits: tusd8Decimals })} tUSD8.`;
-          setThread((prev) => [...prev, { id: youId, role: "you", text: trimmed }, { id: youId + 1, role: "agent", text: line }]);
+          reply(line);
         });
-        setUtterance("");
         return;
       }
-      const line = `${name}, your balance is ${formatTusd(ledger.balance)} tUSD8. ${formatTusd(available(ledger))} is free.${agent?.active ? ` ${agent.label} can spend inside its mandate.` : " No agent is active."}`;
-      setThread((prev) => [
-        ...prev,
-        { id: youId, role: "you", text: trimmed },
-        { id: youId + 1, role: "agent", text: line },
-      ]);
+      void pause.then(() =>
+        reply(
+          `${name}, your balance is ${formatTusd(ledger.balance)} tUSD8. ${formatTusd(available(ledger))} is free.${agent?.active ? ` ${agent.label} can spend inside its mandate.` : " No agent is active."}`,
+        ),
+      );
       return;
     }
-    setPending(parsed.action);
-    setThread((prev) => [
-      ...prev,
-      { id: youId, role: "you", text: trimmed },
-      { id: youId + 1, role: "agent", text: `Review this, ${name}. Nothing moves until you approve.`, action: parsed.action },
-    ]);
+    const action = parsed.action;
+    void pause.then(() => reply(`Review this, ${name}. Nothing moves until you approve.`, action));
   }
 
   function decide(id: number, decision: "approved" | "declined", action?: AgentAction) {
@@ -882,6 +881,20 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
                   );
                 })
               )}
+              {working ? (
+                <div className="msg-in flex justify-start">
+                  <div>
+                    <div className="mb-1 flex items-center gap-2">
+                      <Mark size="sm" />
+                    </div>
+                    <div className="work-bubbles" role="status" aria-label="Agent is working">
+                      <span />
+                      <span />
+                      <span />
+                    </div>
+                  </div>
+                </div>
+              ) : null}
             </div>
             <form
               className="composer mb-1"
@@ -1446,6 +1459,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
           </div>
         </div>
       </div>
+      {moving ? <MoveScreen label={moving} /> : null}
     </div>
   );
 }
@@ -1462,6 +1476,24 @@ function Mark({ tone = "seal", size = "md" }: { tone?: "seal" | "paper"; size?: 
         <path d="M40 36 H152 V84 H88 V116 H216 V164 H88 V212 H40 Z" />
       </svg>
     </span>
+  );
+}
+
+function MoveScreen({ label }: { label: string }) {
+  return (
+    <div className="send-screen" role="status" aria-live="polite" aria-label={label}>
+      <span className="rise-bubble rise-a" />
+      <span className="rise-bubble rise-b" />
+      <span className="rise-bubble rise-c" />
+      <span className="rise-bubble rise-d" />
+      <span className="rise-bubble rise-e" />
+      <div className="send-mark">
+        <span className="rise-shell send-shell" />
+        <Mark size="lg" />
+        <p className="mt-6 font-display text-2xl font-medium tracking-display">{label}</p>
+        <p className="mt-1 text-sm text-muted">On Aevum</p>
+      </div>
+    </div>
   );
 }
 

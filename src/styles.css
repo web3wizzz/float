@@ -587,6 +587,81 @@
   }
 }
 
+.work-bubbles {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  height: 2.25rem;
+}
+
+.work-bubbles span {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 999px;
+  background: var(--color-seal);
+  animation: work-bubble 900ms var(--ease-out-expo) infinite;
+}
+
+.work-bubbles span:nth-child(2) {
+  background: var(--color-balance);
+  animation-delay: 140ms;
+}
+
+.work-bubbles span:nth-child(3) {
+  width: 0.5rem;
+  height: 0.5rem;
+  animation-delay: 280ms;
+}
+
+.send-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  overflow: hidden;
+  background: var(--color-paper);
+}
+
+.send-mark {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  text-align: center;
+}
+
+.send-shell {
+  animation: shell-pulse 1.4s var(--ease-out-expo) infinite;
+}
+
+.send-screen .rise-bubble {
+  animation-iteration-count: infinite;
+}
+
+@keyframes work-bubble {
+  0%,
+  100% {
+    transform: translateY(0) scale(0.7);
+    opacity: 0.45;
+  }
+  50% {
+    transform: translateY(-6px) scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes shell-pulse {
+  0%,
+  100% {
+    opacity: 0.85;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
+
 .feed-item {
   animation: feed-in 180ms var(--ease-out-expo);
 }
@@ -604,7 +679,10 @@
   .intro,
   .rise-bubble,
   .rise-lead,
-  .rise-shell {
+  .rise-shell,
+  .work-bubbles span,
+  .send-shell,
+  .send-screen .rise-bubble {
     animation: none;
     transition: none;
   }
