@@ -464,9 +464,10 @@
   position: fixed;
   inset: 0;
   z-index: 40;
+  display: grid;
+  place-items: center;
   overflow: hidden;
   background: var(--color-paper);
-  animation: intro-leave 360ms var(--ease-out-expo) 1840ms forwards;
 }
 
 .rise-bubble {
@@ -521,12 +522,11 @@
 }
 
 .rise-lead {
-  position: absolute;
-  left: 50%;
-  bottom: 18%;
+  position: relative;
+  z-index: 1;
   display: grid;
   place-items: center;
-  animation: rise-lead 1.35s var(--ease-out-expo) both;
+  animation: mark-settle 700ms var(--ease-out-expo) both;
 }
 
 .rise-shell {
@@ -552,20 +552,12 @@
   }
 }
 
-@keyframes rise-lead {
-  0% {
-    opacity: 0;
-    transform: translate(-50%, 28vh) scale(0.72);
+@keyframes mark-settle {
+  from {
+    transform: scale(0.92);
   }
-  18% {
-    opacity: 1;
-  }
-  70% {
-    transform: translate(-46%, -18vh) scale(1.04);
-  }
-  100% {
-    opacity: 1;
-    transform: translate(-50%, -28vh) scale(1);
+  to {
+    transform: none;
   }
 }
 

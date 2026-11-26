@@ -162,6 +162,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
   const composerRef = useRef<HTMLInputElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [intro, setIntro] = useState(surface === "app");
   const [note, setNote] = useState<string | null>(null);
   const [contact, setContact] = useState(DIRECTORY[1].address);
   const [customPayee, setCustomPayee] = useState("");
@@ -218,6 +219,13 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
     if (storedTheme === "dark" || storedTheme === "light") setTheme(storedTheme);
     setReady(true);
   }, []);
+
+  useEffect(() => {
+    if (!intro || !ready || named === null) return;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const id = window.setTimeout(() => setIntro(false), reduce ? 200 : 1600);
+    return () => window.clearTimeout(id);
+  }, [intro, ready, named]);
 
   useEffect(() => {
     if (!ready) return;
@@ -756,7 +764,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
     );
   }
 
-  if (named === null || !ready) return <div className="min-h-screen bg-paper" />;
+  if (named === null || !ready || intro) return <BubbleIntro />;
   if (!named) {
     return (
       <Welcome
@@ -1596,14 +1604,7 @@ function MoveScreen({ label }: { label: string }) {
   );
 }
 
-function BubbleIntro({ onDone }: { onDone: () => void }) {
-  const done = useRef(onDone);
-  done.current = onDone;
-  useEffect(() => {
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const id = window.setTimeout(() => done.current(), reduce ? 240 : 2200);
-    return () => window.clearTimeout(id);
-  }, []);
+function BubbleIntro() {
   return (
     <div className="intro intro-rise" role="status" aria-label="Float">
       <span className="rise-bubble rise-a" />
@@ -2071,12 +2072,10 @@ function Welcome({ onContinue }: { onContinue: (name: string) => void }) {
 }
 
 export function FloatApp({ surface = "app" }: { surface?: "app" | "tour" }) {
-  const [intro, setIntro] = useState(surface === "app");
   return (
     <WagmiProvider config={wagmiConfig}>
       <QueryClientProvider client={queryClient}>
         <Console surface={surface} />
-        {intro ? <BubbleIntro onDone={() => setIntro(false)} /> : null}
       </QueryClientProvider>
     </WagmiProvider>
   );
