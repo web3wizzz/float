@@ -161,6 +161,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
   const composerRef = useRef<HTMLInputElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [intro, setIntro] = useState(surface === "app");
   const [note, setNote] = useState<string | null>(null);
   const [contact, setContact] = useState(DIRECTORY[1].address);
   const [customPayee, setCustomPayee] = useState("");
@@ -739,6 +740,8 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
       </div>
     );
   }
+
+  if (intro) return <BubbleIntro onDone={() => setIntro(false)} />;
 
   if (named === null || !ready) return <div className="min-h-screen bg-paper" />;
   if (!named) {
@@ -1447,16 +1450,41 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
   );
 }
 
-function Mark({ tone = "seal", size = "md" }: { tone?: "seal" | "paper"; size?: "sm" | "md" }) {
+function Mark({ tone = "seal", size = "md" }: { tone?: "seal" | "paper"; size?: "sm" | "md" | "lg" }) {
+  const box = size === "sm" ? "size-5" : size === "lg" ? "size-20 rounded-2xl" : "size-8";
+  const glyph = size === "sm" ? "size-3" : size === "lg" ? "size-12" : "size-5";
   return (
     <span
-      className={`grid shrink-0 place-items-center rounded-md ${size === "sm" ? "size-5" : "size-8"} ${tone === "paper" ? "bg-paper text-ink" : "bg-seal text-on-seal"}`}
+      className={`grid shrink-0 place-items-center rounded-md ${box} ${tone === "paper" ? "bg-paper text-ink" : "bg-seal text-on-seal"}`}
       aria-hidden="true"
     >
-      <svg viewBox="40 36 176 176" className={size === "sm" ? "size-3" : "size-5"} fill="currentColor">
+      <svg viewBox="40 36 176 176" className={glyph} fill="currentColor">
         <path d="M40 36 H152 V84 H88 V116 H216 V164 H88 V212 H40 Z" />
       </svg>
     </span>
+  );
+}
+
+function BubbleIntro({ onDone }: { onDone: () => void }) {
+  const done = useRef(onDone);
+  done.current = onDone;
+  useEffect(() => {
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const id = window.setTimeout(() => done.current(), reduce ? 240 : 2200);
+    return () => window.clearTimeout(id);
+  }, []);
+  return (
+    <div className="intro intro-rise" role="status" aria-label="Float">
+      <span className="rise-bubble rise-a" />
+      <span className="rise-bubble rise-b" />
+      <span className="rise-bubble rise-c" />
+      <span className="rise-bubble rise-d" />
+      <span className="rise-bubble rise-e" />
+      <div className="rise-lead">
+        <span className="rise-shell" />
+        <Mark size="lg" />
+      </div>
+    </div>
   );
 }
 
@@ -1882,7 +1910,7 @@ function Welcome({ onContinue }: { onContinue: (name: string) => void }) {
             value={draft}
             maxLength={24}
             autoComplete="nickname"
-            placeholder="Your name"
+            placeholder="Your nickname"
             onChange={(event) => setDraft(event.target.value)}
           />
         </label>
