@@ -157,6 +157,20 @@ export interface ChainPayment {
   amount: bigint;
 }
 
+/** Whether this address has an active mandate on the live vault. */
+export async function readAgentActive(client: PublicClient, agent: Address): Promise<boolean> {
+  const vault = vaultAddress();
+  if (!vault) return false;
+  const policy = await client.readContract({
+    address: vault,
+    abi: agentVaultAbi,
+    functionName: "policies",
+    args: [agent],
+  });
+  const active = Array.isArray(policy) ? policy[5] : (policy as { active?: boolean }).active;
+  return Boolean(active);
+}
+
 /** Free tUSD8 in the vault, in base units. Reserved schedule funds are excluded. */
 export async function readVaultAvailable(client: PublicClient): Promise<bigint | null> {
   const vault = vaultAddress();

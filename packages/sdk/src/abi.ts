@@ -144,6 +144,20 @@ export const agentVaultAbi = [
   },
   {
     type: "function",
+    name: "policies",
+    stateMutability: "view",
+    inputs: [{ name: "agent", type: "address" }],
+    outputs: [
+      { name: "perTxLimit", type: "uint128" },
+      { name: "dailyLimit", type: "uint128" },
+      { name: "expiry", type: "uint64" },
+      { name: "allowAnyPayee", type: "bool" },
+      { name: "paused", type: "bool" },
+      { name: "active", type: "bool" },
+    ],
+  },
+  {
+    type: "function",
     name: "pay",
     stateMutability: "nonpayable",
     inputs: [
