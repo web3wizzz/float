@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { format } from "date-fns";
-import { Activity, ArrowUp, ArrowUpRight, Bot, FileText, MessageSquare, Repeat, Settings, Wallet, X } from "lucide-react";
+import { Activity, ArrowUp, ArrowUpRight, Bot, FileText, MessageSquare, Moon, Repeat, Settings, Sun, Wallet, X } from "lucide-react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { createConfig, http, useAccount, useConnect, usePublicClient, useSwitchChain, useWalletClient, WagmiProvider } from "wagmi";
 import { injected } from "wagmi/connectors";
 import type { Address } from "viem";
-import { chainId, configured, contracts, explorerUrl, faucetUrl, aevumTestnet, isHexAddress, rpcUrl, tusd8, tusd8Decimals } from "@/lib/float/config";
-import { DEFAULT_AGENT, DIRECTORY, YOUR_ACCOUNT, labelOf, resolvePayee, shortAddr } from "@/lib/float/directory";
+import { chainId, configured, explorerUrl, aevumTestnet, isHexAddress, rpcUrl, tusd8Decimals } from "@/lib/float/config";
+import { DEFAULT_AGENT, DIRECTORY, labelOf, resolvePayee, shortAddr } from "@/lib/float/directory";
 import { localAgent } from "@/lib/float/agent-key";
 import {
   HOUR_MS,
@@ -44,7 +44,6 @@ import {
   createScheduleOnVault,
   depositToVault,
   executeScheduleOnVault,
-  fundVaultWithAuthorization,
   pauseAgentOnVault,
   pauseVaultOnVault,
   payAsOwnerOnVault,
@@ -59,7 +58,6 @@ import {
 } from "../../../packages/sdk/src/vault.ts";
 
 type Tab = "chat" | "home" | "send" | "invoices" | "agents" | "activity";
-type Mode = "simulation" | "live";
 
 interface Receipt {
   id: number;
@@ -174,7 +172,6 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
   const [draftAmt, setDraftAmt] = useState("40");
   const [draftMemo, setDraftMemo] = useState("");
   const [lastProof, setLastProof] = useState<string | null>(null);
-  const [mode, setMode] = useState<Mode>("simulation");
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [chainPays, setChainPays] = useState<Awaited<ReturnType<typeof readVaultPayments>>>([]);
   const [busy, setBusy] = useState(false);
@@ -184,7 +181,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
   const publicClient = usePublicClient({ chainId: aevumTestnet.id });
   const { data: walletClient } = useWalletClient({ chainId: aevumTestnet.id });
 
-  const live = mode === "live";
+  const live = true;
 
   useEffect(() => {
     const saved = loadLedger(localStorage.getItem(KEY));
@@ -290,7 +287,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
   const clock = now == null ? null : now + ledger.offsetMs;
   const activeAgents = ledger.agents.filter((item) => item.active);
   const agent = activeAgents[0] ?? ledger.agents[0];
-  const account = live && wallet ? wallet : YOUR_ACCOUNT;
+  const account = wallet ?? "";
 
   function at(): number {
     return (now ?? Date.now()) + ledger.offsetMs;
@@ -356,11 +353,6 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
       return resolvePayee(typed)?.address ?? null;
     }
     return contact;
-  }
-
-  function onAuthorize(value = Number(fundAmt)) {
-    if (!live) return;
-    void liveSend("Authorize tUSD8", (pc, wc) => fundVaultWithAuthorization(pc, wc, wholeToBase(value)));
   }
 
   function onDeposit(value = Number(fundAmt)) {
@@ -722,9 +714,10 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
 
   if (surface === "tour") {
     return (
-      <div className="min-h-screen bg-paper text-ink">
-        <header className="border-b border-line">
-          <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 py-3">
+      <div className="app-shell">
+        <div className="app-column">
+        <header className="app-header">
+          <div className="app-pad mx-auto flex max-w-3xl items-center justify-between gap-3 py-3">
             <Link to="/" className="flex items-center" aria-label="Float">
               <Mark />
             </Link>
@@ -733,9 +726,10 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
             </Link>
           </div>
         </header>
-        <main className="mx-auto max-w-3xl px-4 py-5">
+        <main className="app-stage">
           <Tour human={humanSteps} agent={agentSteps} ready={ready} busy={busy} />
         </main>
+        </div>
       </div>
     );
   }
@@ -754,8 +748,8 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
   }
 
   return (
-    <div className="min-h-screen bg-paper text-ink lg:pl-56">
-      <aside className="fixed inset-y-0 left-0 z-20 hidden w-56 flex-col border-r border-line bg-paper lg:flex">
+    <div className="app-shell min-h-0">
+      <aside className="fixed inset-y-0 left-0 z-20 hidden w-60 flex-col border-r border-line bg-paper lg:flex">
         <nav className="flex flex-1 flex-col gap-1 px-3 pt-4" aria-label="Sections">
           {NAV.map((item) => (
             <button
@@ -771,24 +765,18 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
         </nav>
       </aside>
 
-      <header className="border-b border-line">
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 py-3">
+      <div className="app-column lg:col-start-2">
+      <header className="app-header">
+        <div className="app-pad mx-auto flex max-w-6xl items-center justify-between gap-3 py-3">
           <div className="flex min-w-0 items-center" aria-label="Float">
             <Mark />
           </div>
           <div className="flex items-center gap-2">
-            <div className="hidden rounded-lg bg-paper p-1 shadow-plane lg:flex" role="group" aria-label="Ledger mode">
-              <button type="button" aria-pressed={!live} onClick={() => setMode("simulation")} className={`press min-h-11 rounded-md px-3 text-sm ${!live ? "bg-ink text-paper" : "text-muted"}`}>
-                Simulation
-              </button>
-              <button type="button" aria-pressed={live} onClick={() => setMode("live")} className={`press min-h-11 rounded-md px-3 text-sm ${live ? "bg-seal text-on-seal" : "text-muted"}`}>
-                Live (Aevum)
-              </button>
-            </div>
             <button
               type="button"
               className={isConnected && walletChain === chainId ? ghost : primary}
               disabled={isPending || (!isConnected && connectors.length === 0)}
+              aria-label={!isConnected ? "Connect wallet" : walletChain !== chainId ? "Switch network" : shortAddr(wallet ?? "Wallet")}
               onClick={() => {
                 if (!isConnected) {
                   const connector = connectors[0];
@@ -798,7 +786,8 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
                 if (walletChain !== chainId) void switchChainAsync({ chainId });
               }}
             >
-              {!isConnected ? "Connect wallet" : walletChain !== chainId ? "Switch network" : shortAddr(wallet ?? "")}
+              <Wallet className="size-4 sm:hidden" aria-hidden="true" />
+              <span className="hidden sm:inline">{!isConnected ? "Connect wallet" : walletChain !== chainId ? "Switch network" : shortAddr(wallet ?? "")}</span>
             </button>
             <button type="button" className={iconBtn} aria-label="Settings" onClick={() => setSettingsOpen(true)}>
               <Settings className="size-4" aria-hidden="true" />
@@ -813,7 +802,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
         </div>
       ) : null}
 
-      <main className={`mx-auto w-full max-w-3xl px-4 ${tab === "chat" ? "thread-frame flex flex-col pt-2" : "py-5 pb-24 lg:pb-10"}`}>
+      <main className={`app-stage ${tab === "chat" ? "app-stage-chat" : ""}`}>
         {tab === "chat" ? (
           <div className="flex min-h-0 flex-1 flex-col">
             <div className="flex items-baseline justify-between gap-3 py-2">
@@ -913,7 +902,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
         {tab === "home" ? (
           <div className="stage space-y-5">
             <Cheque balance={ledger.balance} free={available(ledger)} reserved={ledger.reserved} account={account} />
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
               <Quick icon={ArrowUpRight} label="Send" hint="Move tUSD8" primary onClick={() => { setSendMode("once"); setReview(null); setTab("send"); }} />
               <Quick icon={FileText} label="Request" hint="New invoice" onClick={() => { setShowRequest(true); setTab("invoices"); }} />
               <Quick icon={Wallet} label="Invoice" hint="Pay or release" onClick={() => setTab("invoices")} />
@@ -997,7 +986,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
             }}
             onCancel={(id) => {
               if (live) {
-                record({ ok: false, title: "Cancel", detail: "This list is the sandbox. An Aevum schedule keeps running until it is cancelled on chain.", hashes: [] });
+                record({ ok: false, title: "Cancel", detail: "Cancel it on Aevum.", hashes: [] });
                 return;
               }
               apply(cancelSchedule(ledger, id, at()));
@@ -1258,14 +1247,9 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
                     {item.label === DEFAULT_AGENT.label && item.active ? (
                       <div className="row rounded-lg p-3">
                         <p className="text-sm">DataRelay oracle</p>
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          <button type="button" className={primary} disabled={busy || !!liveHold} title={liveHold ?? undefined} onClick={onBuy}>
-                            Buy oracle
-                          </button>
-                          <button type="button" className={ghost} disabled={busy || (!lastProof && ledger.usedProofs.length === 0)} onClick={onReplay}>
-                            Replay proof
-                          </button>
-                        </div>
+                        <button type="button" className={primary} disabled={busy || !!liveHold} title={liveHold ?? undefined} onClick={onBuy}>
+                          Buy oracle
+                        </button>
                         {ledger.x402[0].purchases[0] ? (
                           <p className="mt-2 font-mono text-xs text-treasury">{ledger.x402[0].purchases[0].body}</p>
                         ) : null}
@@ -1347,7 +1331,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
         ) : null}
       </main>
 
-      <nav className="dock fixed inset-x-0 bottom-0 z-20 border-t border-line bg-paper lg:hidden" aria-label="Sections">
+      <nav className="app-dock lg:hidden" aria-label="Sections">
         <ul className="grid grid-cols-5">
           {NAV.map((item) => (
             <li key={item.id}>
@@ -1379,56 +1363,32 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
           >
             <div className="flex items-center justify-between gap-3">
               <h2 className="font-display text-lg font-medium tracking-display">Settings</h2>
-              <button type="button" className={ghost} aria-label="Close settings" onClick={() => setSettingsOpen(false)}>
+              <button type="button" className={iconBtn} aria-label="Close settings" onClick={() => setSettingsOpen(false)}>
                 <X className="size-4" aria-hidden="true" />
               </button>
             </div>
-            <p className="mt-1 font-mono text-xs text-muted">{clock == null ? "—" : format(clock, "MMM d · HH:mm")}</p>
-            <section>
-              <h3 className="text-sm font-medium">Appearance</h3>
-              <div className="mt-2 flex rounded-lg bg-surface-2 p-1" role="group" aria-label="Appearance">
-                <button type="button" aria-pressed={theme === "light"} onClick={() => setTheme("light")} className={`press min-h-11 flex-1 rounded-md text-sm ${theme === "light" ? "bg-ink text-paper" : "text-muted"}`}>
-                  White
-                </button>
-                <button type="button" aria-pressed={theme === "dark"} onClick={() => setTheme("dark")} className={`press min-h-11 flex-1 rounded-md text-sm ${theme === "dark" ? "bg-ink text-paper" : "text-muted"}`}>
-                  Dark
-                </button>
-              </div>
-            </section>
-            <section className="mt-5 lg:hidden">
-              <h3 className="text-sm font-medium">Mode</h3>
-              <div className="mt-2 flex rounded-lg bg-paper p-1 shadow-plane" role="group" aria-label="Ledger mode">
-                <button type="button" aria-pressed={!live} onClick={() => setMode("simulation")} className={`press min-h-11 flex-1 rounded-md text-sm ${!live ? "bg-ink text-paper" : "text-muted"}`}>
-                  Simulation
-                </button>
-                <button type="button" aria-pressed={live} onClick={() => setMode("live")} className={`press min-h-11 flex-1 rounded-md text-sm ${live ? "bg-seal text-on-seal" : "text-muted"}`}>
-                  Live (Aevum)
-                </button>
-              </div>
-            </section>
-            <section className="mt-4">
-              <h3 className="text-sm font-medium">Your balance</h3>
-              <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-                <label className="sr-only" htmlFor="fund">
-                  Amount
-                </label>
-                <input id="fund" inputMode="numeric" className={field} value={fundAmt} onChange={(e) => setFundAmt(digits(e.target.value))} />
-                <button type="button" className={primary} disabled={!ready || busy || !!liveHold} onClick={() => onDeposit()}>
-                  Add money
-                </button>
-                {live ? (
-                  <button type="button" className={ghost} disabled={!ready || busy || !!liveHold} onClick={() => onAuthorize()}>
-                    Authorize
-                  </button>
-                ) : null}
-                <button type="button" className={ghost} disabled={!ready || busy} onClick={onWithdraw}>
-                  Withdraw
-                </button>
-              </div>
-            </section>
-            <section className="mt-5">
-              <h3 className="text-sm font-medium">Your name</h3>
-              <p className="mt-1 text-sm text-muted">The agent uses this when it talks to you.</p>
+            <div className="mt-6 flex gap-2" role="group" aria-label="Appearance">
+              <button
+                type="button"
+                aria-label="White"
+                aria-pressed={theme === "light"}
+                onClick={() => setTheme("light")}
+                className={`${iconBtn} ${theme === "light" ? "bg-ink text-paper" : ""}`}
+              >
+                <Sun className="size-4" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                aria-label="Dark"
+                aria-pressed={theme === "dark"}
+                onClick={() => setTheme("dark")}
+                className={`${iconBtn} ${theme === "dark" ? "bg-ink text-paper" : ""}`}
+              >
+                <Moon className="size-4" aria-hidden="true" />
+              </button>
+            </div>
+            <label className="mt-6 block text-sm">
+              Name
               <input
                 className={`${field} mt-2`}
                 value={name}
@@ -1444,60 +1404,34 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
                   setName(trimmed);
                 }}
               />
-            </section>
-            <section className="mt-5">
-              <h3 className="text-sm font-medium">Aevum</h3>
-              <p className="mt-1 text-sm text-muted">
-                {configured ? "Live payments use your vault on Aevum." : "No vault is available on Aevum yet. Live payments stay off."}
-              </p>
-              <dl className="mt-3 space-y-2 font-mono text-xs">
-                <ConfigRow k="Chain" v={String(chainId)} />
-                <ConfigRow k="Network" v={rpcUrl} />
-                <ConfigRow k="Explorer" v={explorerUrl} />
-                <ConfigRow k="Faucet" v={faucetUrl} />
-                <ConfigRow k="tUSD8" v={tusd8} />
-                <ConfigRow k="Decimals" v={String(tusd8Decimals)} />
-                <ConfigRow k="Vault" v={contracts.vault || "Not set"} />
-                <ConfigRow k="Wallet" v={isConnected ? `${shortAddr(wallet ?? "")}${walletChain != null ? ` · ${walletChain}` : ""}` : "Not connected"} />
-              </dl>
-            </section>
-            <div className="mt-5 flex flex-wrap gap-2">
-              <Link to="/tour" className={`${ghost} inline-flex items-center`}>
-                Open guided tour
-              </Link>
-              <button
-                type="button"
-                className={dangerBtn}
-                disabled={busy || !!liveHold}
-                title={liveHold ?? undefined}
-                onClick={() => {
-                  if (live) {
-                    void liveSend(ledger.globalPaused ? "Resume vault" : "Pause vault", (pc, wc) => pauseVaultOnVault(pc, wc, !ledger.globalPaused));
-                    return;
-                  }
-                  apply(setGlobalPaused(ledger, !ledger.globalPaused, at()));
-                }}
-              >
-                {ledger.globalPaused ? "Resume vault" : "Pause vault"}
+            </label>
+            <div className="mt-6 flex flex-col gap-2">
+              <label className="sr-only" htmlFor="fund">
+                Amount
+              </label>
+              <input id="fund" inputMode="numeric" className={field} value={fundAmt} onChange={(e) => setFundAmt(digits(e.target.value))} />
+              <button type="button" className={primary} disabled={!ready || busy || !!liveHold} onClick={() => onDeposit()}>
+                Add money
               </button>
-              <button
-                type="button"
-                className={ghost}
-                onClick={() => {
-                  localStorage.removeItem(KEY);
-                  setLedger(freshLedger());
-                  setPending(null);
-                  setLastProof(null);
-                  setReview(null);
-                  setNote("Cleared on this device.");
-                }}
-              >
-                Clear this device
+              <button type="button" className={ghost} disabled={!ready || busy || !!liveHold} onClick={onWithdraw}>
+                Withdraw
               </button>
             </div>
+            <button
+              type="button"
+              className={`${dangerBtn} mt-6`}
+              disabled={busy || !!liveHold}
+              title={liveHold ?? undefined}
+              onClick={() => {
+                void liveSend(ledger.globalPaused ? "Resume vault" : "Pause vault", (pc, wc) => pauseVaultOnVault(pc, wc, !ledger.globalPaused));
+              }}
+            >
+              {ledger.globalPaused ? "Resume vault" : "Pause vault"}
+            </button>
             {liveHold ? <p className="mt-2 text-xs text-muted">{liveHold}</p> : null}
           </div>
         </div>
+      </div>
     </div>
   );
 }
@@ -1582,7 +1516,7 @@ function Cheque({ balance, free, reserved, account }: { balance: number; free: n
             <p className="amount mt-1 font-mono text-sm">{formatTusd(reserved)}</p>
           </div>
         </div>
-        <p className="mt-3 font-mono text-xs tracking-wide opacity-70">{shortAddr(account)}</p>
+        {account ? <p className="mt-3 font-mono text-xs tracking-wide opacity-70">{shortAddr(account)}</p> : null}
       </div>
     </article>
   );
@@ -1857,15 +1791,6 @@ function SendPanel({
   );
 }
 
-function ConfigRow({ k, v }: { k: string; v: string }) {
-  return (
-    <div className="flex items-baseline justify-between gap-3 border-b border-line py-1.5">
-      <dt className="text-muted">{k}</dt>
-      <dd className="truncate text-ink">{v || "—"}</dd>
-    </div>
-  );
-}
-
 function Feed({ feed, clock, onEmpty }: { feed: FeedItem[]; clock: number | null; onEmpty?: () => void }) {
   if (feed.length === 0) {
     return (
@@ -1910,7 +1835,7 @@ function Welcome({ onContinue }: { onContinue: (name: string) => void }) {
   const [draft, setDraft] = useState("");
   const clean = draft.trim().slice(0, 24);
   return (
-    <div className="grid min-h-screen place-items-center bg-paper px-6 text-ink">
+    <div className="welcome bg-paper text-ink">
       <form
         className="enter w-full max-w-md text-center"
         onSubmit={(event) => {
