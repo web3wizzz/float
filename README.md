@@ -2,6 +2,10 @@
 
 Give your agents a float, not your keys.
 
+![Float motion demo](docs/float-demo.gif)
+
+The live app is [float-blush-nu.vercel.app](https://float-blush-nu.vercel.app/).
+
 Float is a tUSD8 vault for the Aevum Builder Challenge. The owner deposits the stablecoin and writes a policy. An agent can pay only inside that policy: a per-transaction cap, a rolling day, an allowlist, an expiry, and pause or revoke. A sentence — from a person or from a parser — is only an intent. The vault is the authority.
 
 Network: **Aevum testnet, chain id 44005**. Not QDay Origin (44003). Native gas is tQDAY, 18 decimals. RPC, explorer, faucet, the tUSD8 address, the token decimals, and the deployed contract addresses live in one file: `packages/sdk/src/config.ts`. tUSD8 `decimals()` on that network is **6**. Do not copy the token address into another file. The deploy script reads the address and the decimals from that file.
@@ -30,7 +34,7 @@ flowchart LR
 - **AgentVault** holds the token. Agents call `pay`, or a relayer submits an EIP-712 intent (domain name `Float Vault`). A late schedule pays once and sets `nextRun = now + interval`.
 - **InvoiceEscrow** holds a payment until delivery is confirmed, the confirm window elapses, the due date passes, or the arbiter resolves a dispute.
 - **IAgentAuth.verify(claimedSigner, digest, signature)** is the only signature check. ECDSA ships today. A post-quantum verifier replaces it with `setAuth`.
-- The **console** defaults to a labelled simulation that copies those rules. **Live (Aevum)** uses wagmi and viem: `simulateContract`, then `writeContract`. Reverts (including `PayeeNotAllowed`) are shown as the contract returned them, with the transaction hash and an explorer link when a send succeeds.
+- The **console** is the product. Connect an Ethereum wallet that can add a custom network, then send on Aevum. The agent signs an intent. The connected wallet only submits it. Reverts (including `PayeeNotAllowed`) are shown as the contract returned them, with an explorer link when a send succeeds.
 
 ## Layout
 
@@ -123,11 +127,11 @@ node --experimental-strip-types agent/x402-demo/client.ts
 
 ## Web console
 
-Simulation is the default, so the demo runs without a wallet. Switch to **Live (Aevum)** and use **Connect wallet** to send on chain 44005 to the vault in `packages/sdk/src/config.ts`. If the wallet is not connected, Send, Invoice, and Add agent stay off.
+Open [float-blush-nu.vercel.app](https://float-blush-nu.vercel.app/) and connect a wallet on Aevum, chain 44005. Any Ethereum wallet the browser announces can connect. Phantom cannot add Aevum. MetaMask and Rabby can. If the wallet is not connected, or the vault address is empty, Send, Invoice, and Add agent stay off.
 
 The product opens as a conversation. You tell the agent what to pay. It answers with a review card, and nothing moves until you approve. Wallet, invoices, agents, and activity sit beside that thread.
 
-The guided tour is a separate page at `/tour`. Open it from Settings (**Open guided tour**). It is not on Home. **Try Northwind** is a step there: a payment to a payee that was never allowlisted. Simulation records `PayeeNotAllowed`. Live mode asks the contract and shows that revert.
+The guided tour is a separate page at `/tour`. Open it from Settings. It is not on Home.
 
 ## Post-quantum
 
