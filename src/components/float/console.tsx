@@ -209,6 +209,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
   const [busy, setBusy] = useState(false);
   const [working, setWorking] = useState(false);
   const [moving, setMoving] = useState<string | null>(null);
+  const [preparing, setPreparing] = useState(false);
   const [slip, setSlip] = useState<{ title: string; amount?: number; who?: string; hash?: string } | null>(null);
   const { address: wallet, chainId: walletChain, connector, isConnected } = useAccount();
   const { connect, connectors, isPending } = useConnect();
@@ -763,6 +764,7 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
     setThread((prev) => [...prev, { id: youId, role: "you", text: trimmed }]);
     const pause = new Promise((resolve) => window.setTimeout(resolve, 780));
     const reply = (line: string, action?: AgentAction) => {
+      setPreparing(false);
       setPending(action ?? null);
       setThread((prev) => [...prev, { id: youId + 1, role: "agent", text: line, action }]);
       setWorking(false);
@@ -790,7 +792,9 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
       return;
     }
     const action = parsed.action;
-    void pause.then(() => reply(`Review this, ${name}. Nothing moves until you approve.`, action));
+    setPreparing(true);
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    window.setTimeout(() => reply(`Review this, ${name}. Nothing moves until you approve.`, action), reduce ? 200 : 1600);
   }
 
   function decide(id: number, decision: "approved" | "declined", action?: AgentAction) {
@@ -1079,7 +1083,12 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
                 setNote("Enter a whole number of tUSD8.");
                 return;
               }
-              setReview({ payee, amount, memo: memo.trim(), repeat: sendMode === "repeat" });
+              setPreparing(true);
+              const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+              window.setTimeout(() => {
+                setReview({ payee, amount, memo: memo.trim(), repeat: sendMode === "repeat" });
+                setPreparing(false);
+              }, reduce ? 200 : 1600);
             }}
             onBack={() => setReview(null)}
             onConfirm={(every) => {
@@ -1570,6 +1579,8 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
           hash={slip.hash}
           onDone={() => setSlip(null)}
         />
+      ) : preparing ? (
+        <MoveScreen label="Preparing" note="Nothing moves yet" />
       ) : moving ? (
         <MoveScreen label={moving} />
       ) : null}
@@ -1696,7 +1707,7 @@ function ReceiptScreen({
   );
 }
 
-function MoveScreen({ label }: { label: string }) {
+function MoveScreen({ label, note = "On Aevum" }: { label: string; note?: string }) {
   return (
     <div className="send-screen" role="status" aria-live="polite" aria-label={label}>
       <span className="rise-bubble rise-a" />
@@ -1708,7 +1719,7 @@ function MoveScreen({ label }: { label: string }) {
         <span className="rise-shell send-shell" />
         <Mark size="lg" />
         <p className="mt-6 font-display text-2xl font-medium tracking-display">{label}</p>
-        <p className="mt-1 text-sm text-muted">On Aevum</p>
+        <p className="mt-1 text-sm text-muted">{note}</p>
       </div>
     </div>
   );
