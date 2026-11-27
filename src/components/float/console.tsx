@@ -917,9 +917,9 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
                 <div className="flex flex-1 flex-col items-center justify-center px-2 text-center">
                   <Mark />
                   <h1 className="mt-4 font-display text-2xl font-medium tracking-display">{name}, what should your agent pay?</h1>
-                  <p className="mt-2 max-w-sm text-sm text-muted">It shows a review card. Nothing moves until you approve.</p>
+                  <p className="mt-2 max-w-sm text-sm text-muted">Ask about Float, or tell it who to pay. Nothing moves until you approve.</p>
                   <div className="mt-6 flex flex-wrap justify-center gap-2">
-                    {["What’s my balance?", "Send 5 tUSD8 to DataRelay", "Buy the DataRelay oracle"].map((prompt) => (
+                    {["What is Float?", "What’s my balance?", "Send 5 tUSD8 to DataRelay"].map((prompt) => (
                       <button key={prompt} type="button" className={ghost} onClick={() => askAgent(prompt)}>
                         {prompt}
                       </button>
