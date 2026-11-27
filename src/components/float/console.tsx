@@ -1716,7 +1716,6 @@ function MoveScreen({ label, note = "On Aevum" }: { label: string; note?: string
       <span className="rise-bubble rise-d" />
       <span className="rise-bubble rise-e" />
       <div className="send-mark">
-        <span className="rise-shell send-shell" />
         <Mark size="lg" />
         <p className="mt-6 font-display text-2xl font-medium tracking-display">{label}</p>
         <p className="mt-1 text-sm text-muted">{note}</p>
