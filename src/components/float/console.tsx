@@ -85,6 +85,33 @@ const wagmiConfig = createConfig({
   ssr: true,
 });
 
+const WALLETS: { id: string; name: string; match: RegExp; open: (page: string) => string | null }[] = [
+  { id: "metamask", name: "MetaMask", match: /metamask/i, open: (page) => `https://metamask.app.link/dapp/${page}` },
+  {
+    id: "phantom",
+    name: "Phantom",
+    match: /phantom/i,
+    open: (page) => {
+      const url = encodeURIComponent(`https://${page}`);
+      return `https://phantom.app/ul/browse/${url}?ref=${url}`;
+    },
+  },
+  { id: "rabby", name: "Rabby", match: /rabby/i, open: () => null },
+  { id: "rainbow", name: "Rainbow", match: /rainbow/i, open: (page) => `https://rnbwapp.com/browser?url=${encodeURIComponent(`https://${page}`)}` },
+  { id: "coinbase", name: "Coinbase", match: /coinbase/i, open: (page) => `https://go.cb-w.com/dapp?cb_url=${encodeURIComponent(`https://${page}`)}` },
+  { id: "trust", name: "Trust", match: /trust/i, open: (page) => `https://link.trustwallet.com/open_url?coin_id=60&url=${encodeURIComponent(`https://${page}`)}` },
+  {
+    id: "okx",
+    name: "OKX",
+    match: /okx|okex/i,
+    open: (page) => `https://www.okx.com/download?deeplink=${encodeURIComponent(`okx://wallet/dapp/url?dappUrl=${encodeURIComponent(`https://${page}`)}`)}`,
+  },
+  { id: "brave", name: "Brave", match: /brave/i, open: () => null },
+];
+
+function WalletGlyph({ id }: { id: string }) {
+  return <img src={`/wallets/${id}.svg`} alt="" className="size-10" />;
+}
 const KEY = "float-ledger-v1";
 const NAME_KEY = "float.user-name";
 const field =
@@ -183,9 +210,53 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
   const [working, setWorking] = useState(false);
   const [moving, setMoving] = useState<string | null>(null);
   const [slip, setSlip] = useState<{ title: string; amount?: number; who?: string; hash?: string } | null>(null);
-  const { address: wallet, chainId: walletChain, isConnected } = useAccount();
+  const { address: wallet, chainId: walletChain, connector, isConnected } = useAccount();
   const { connect, connectors, isPending } = useConnect();
   const { switchChainAsync } = useSwitchChain();
+
+  async function openAevum() {
+    try {
+      await switchChainAsync({ chainId });
+      return;
+    } catch {
+      // The wallet does not have Aevum yet. Ask it to add the chain.
+    }
+    const provider = (await connector?.getProvider()) as { request?: (args: { method: string; params?: unknown[] }) => Promise<unknown> } | undefined;
+    if (!provider?.request) {
+      setNote("This wallet cannot add Aevum. Use one that allows a custom network.");
+      return;
+    }
+    try {
+      await provider.request({
+        method: "wallet_addEthereumChain",
+        params: [
+          {
+            chainId: `0x${chainId.toString(16)}`,
+            chainName: aevumTestnet.name,
+            nativeCurrency: aevumTestnet.nativeCurrency,
+            rpcUrls: [rpcUrl],
+            blockExplorerUrls: [explorerUrl],
+          },
+        ],
+      });
+      await switchChainAsync({ chainId });
+    } catch {
+      setNote("This wallet will not add Aevum. Phantom only allows its own networks. Use MetaMask or Rabby.");
+    }
+  }
+
+  function chooseWallet(id: string) {
+    setWalletsOpen(false);
+    const choice = WALLETS.find((item) => item.id === id);
+    const found = choice ? connectors.find((connector) => choice.match.test(connector.name) || choice.match.test(connector.id)) : undefined;
+    if (found) {
+      void connect({ connector: found, chainId });
+      return;
+    }
+    const page = `${window.location.host}${window.location.pathname}`;
+    const href = choice?.open(page);
+    if (href) window.location.assign(href);
+  }
   const publicClient = usePublicClient({ chainId: aevumTestnet.id });
   const { data: walletClient } = useWalletClient({ chainId: aevumTestnet.id });
 
@@ -803,52 +874,22 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
           <div className="flex min-w-0 items-center" aria-label="Float">
             <Mark />
           </div>
-          <div className="relative flex items-center gap-2">
+          <div className="flex items-center gap-2">
             <button
               type="button"
-              className={isConnected && walletChain === chainId ? ghost : primary}
+              className={isConnected && walletChain === chainId ? iconBtn : "press grid size-11 shrink-0 place-items-center rounded-lg bg-seal text-on-seal shadow-plane"}
               disabled={isPending}
               aria-label={!isConnected ? "Connect wallet" : walletChain !== chainId ? "Switch network" : shortAddr(wallet ?? "Wallet")}
-              aria-expanded={!isConnected ? walletsOpen : undefined}
               onClick={() => {
                 if (!isConnected) {
-                  setWalletsOpen((open) => !open);
+                  setWalletsOpen(true);
                   return;
                 }
-                setWalletsOpen(false);
-                if (walletChain !== chainId) void switchChainAsync({ chainId });
+                if (walletChain !== chainId) void openAevum();
               }}
             >
-              {!isConnected ? <span>Connect wallet</span> : <Wallet className="size-4 sm:hidden" aria-hidden="true" />}
-              <span className={isConnected ? "hidden sm:inline" : "hidden"}>
-                {walletChain !== chainId ? "Switch network" : shortAddr(wallet ?? "")}
-              </span>
+              <Wallet className="size-4" aria-hidden="true" />
             </button>
-            {walletsOpen && !isConnected ? (
-              <div className="absolute right-0 top-12 z-30 w-52 rounded-lg bg-paper p-1 shadow-plane" role="menu">
-                {(() => {
-                  const found = connectors.filter((connector) => connector.id !== "injected");
-                  const list = found.length > 0 ? found : connectors;
-                  if (list.length === 0) {
-                    return <p className="px-3 py-3 text-sm text-muted">Open this page in your wallet.</p>;
-                  }
-                  return list.map((connector) => (
-                    <button
-                      key={connector.uid}
-                      type="button"
-                      role="menuitem"
-                      className="press flex min-h-11 w-full items-center rounded-md px-3 text-left text-sm text-ink"
-                      onClick={() => {
-                        setWalletsOpen(false);
-                        void connect({ connector, chainId });
-                      }}
-                    >
-                      {connector.id === "injected" ? "Browser wallet" : connector.name}
-                    </button>
-                  ));
-                })()}
-              </div>
-            ) : null}
             <button type="button" className={iconBtn} aria-label="Settings" onClick={() => setSettingsOpen(true)}>
               <Settings className="size-4" aria-hidden="true" />
             </button>
@@ -1531,6 +1572,52 @@ export function Console({ surface = "app" }: { surface?: "app" | "tour" }) {
         />
       ) : moving ? (
         <MoveScreen label={moving} />
+      ) : null}
+      {walletsOpen ? (
+        <div className="veil veil-open fixed inset-0 z-40 flex items-end justify-center bg-ink/40 sm:items-center" onClick={() => setWalletsOpen(false)}>
+          <div
+            role="dialog"
+            aria-label="Connect wallet"
+            className="w-full max-w-md rounded-t-3xl bg-paper p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-float sm:rounded-3xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <Mark />
+              <button type="button" className={iconBtn} aria-label="Close" onClick={() => setWalletsOpen(false)}>
+                <X className="size-4" aria-hidden="true" />
+              </button>
+            </div>
+            <div className="grid grid-cols-4 gap-2">
+              {WALLETS.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="press flex min-h-24 flex-col items-center justify-center gap-2 rounded-2xl bg-surface px-1"
+                  onClick={() => chooseWallet(item.id)}
+                >
+                  <WalletGlyph id={item.id} />
+                  <span className="text-xs text-ink">{item.name}</span>
+                </button>
+              ))}
+              {connectors
+                .filter((connector) => connector.id !== "injected" && !WALLETS.some((item) => item.match.test(connector.name) || item.match.test(connector.id)))
+                .map((connector) => (
+                  <button
+                    key={connector.uid}
+                    type="button"
+                    className="press flex min-h-24 flex-col items-center justify-center gap-2 rounded-2xl bg-surface px-1"
+                    onClick={() => {
+                      setWalletsOpen(false);
+                      void connect({ connector, chainId });
+                    }}
+                  >
+                    {connector.icon ? <img src={connector.icon} alt="" className="size-10" /> : <Wallet className="size-5" aria-hidden="true" />}
+                    <span className="text-xs text-ink">{connector.name}</span>
+                  </button>
+                ))}
+            </div>
+          </div>
+        </div>
       ) : null}
     </div>
   );
