@@ -4,6 +4,8 @@ Give your agents a float, not your keys.
 
 ![Float motion demo](docs/float-demo.gif)
 
+The same cut with sound is [docs/float-demo.mp4](docs/float-demo.mp4). A README image cannot carry audio.
+
 The live app is [float-blush-nu.vercel.app](https://float-blush-nu.vercel.app/).
 
 Float is a tUSD8 vault for the Aevum Builder Challenge. The owner deposits the stablecoin and writes a policy. An agent can pay only inside that policy: a per-transaction cap, a rolling day, an allowlist, an expiry, and pause or revoke. A sentence — from a person or from a parser — is only an intent. The vault is the authority.
